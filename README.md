@@ -26,7 +26,7 @@
 
 ```typescript
 const marcus: Developer & Joker = {
-  alterEgo: "Marcus Góis",
+  alterEgo: "Marcus Gois",
   base: "Gotham... digo, Brasil 🇧🇷",
   code: ["TypeScript", "JavaScript", "SQL"],
   stack: {
