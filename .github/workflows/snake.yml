@@ -1,0 +1,43 @@
+# 🐍🃏 Cobrinha do Coringa — gera a animação das suas contribuições
+#
+# ONDE COLOCAR: no repositório marcusgois14-coder/marcusgois14-coder,
+# neste caminho exato:  .github/workflows/snake.yml
+#
+# COMO ATIVAR (1 minuto):
+#   1. No repo, vá em Settings → Actions → General → Workflow permissions
+#      e marque "Read and write permissions" → Save
+#   2. Vá na aba Actions → "Gerar cobrinha do caos 🐍" → "Run workflow"
+#   3. Pronto! Depois disso ela se atualiza sozinha todo dia à meia-noite.
+
+name: Gerar cobrinha do caos 🐍
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # todo dia à meia-noite (UTC)
+  workflow_dispatch: # botão para rodar manualmente
+  push:
+    branches:
+      - main
+
+jobs:
+  generate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Gerar a cobrinha (verde neon comendo o caos roxo)
+        uses: Platane/snk/svg-only@v3
+        with:
+          github_user_name: ${{ github.repository_owner }}
+          outputs: |
+            dist/github-snake.svg?color_snake=#7b2cbf&color_dots=#ebedf0,#d8b9f5,#b07ce8,#8a3ffc,#5a189a
+            dist/github-snake-dark.svg?color_snake=#00ff41&color_dots=#12001a,#3c096c,#5a189a,#7b2cbf,#9d4edd
+
+      - name: Publicar no branch "output"
+        uses: crazy-max/ghaction-github-pages@v3.1.0
+        with:
+          target_branch: output
+          build_dir: dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
