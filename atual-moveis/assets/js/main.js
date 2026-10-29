@@ -2,28 +2,31 @@
   'use strict';
 
   const D = window.ATUAL;
+  const S = D.store;
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-  const productById = Object.fromEntries(D.products.map((p) => [p.id, p]));
-  const mqMobile = window.matchMedia('(max-width: 989px)');
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const byId = Object.fromEntries(D.products.map((p) => [p.id, p]));
+  const mqMobile = window.matchMedia('(max-width: 749px)');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
+  /* ---------- Utilitários ---------- */
   const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  const pixPrice = (p) => p.price * (1 - D.store.pixDiscount);
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const icon = (id, cls = 'icon') => `<svg class="${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const icon = (id, cls = '') => `<svg class="${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
+  const cardTotal = (pix) => pix / (1 - S.pixDiscount);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-  const picture = (name, alt, { sizes = '100vw', eager = false, cls = '' } = {}) => `
-    <picture>
+  const img = (name, { cls = '', eager = false, sizes = '' } = {}) => `<picture>
       <source type="image/webp" srcset="assets/img/${name}.webp">
-      <img class="${cls}" src="assets/img/${name}.jpg" alt="${esc(alt)}" sizes="${sizes}" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">
+      <img class="${cls}" src="assets/img/${name}.jpg" alt="" ${sizes ? `sizes="${sizes}"` : ''} ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">
     </picture>`;
 
-  const store = {
+  const storage = {
     get(key, fallback) {
       try {
         const v = localStorage.getItem(key);
-        return v ? JSON.parse(v) : fallback;
+        return v === null ? fallback : JSON.parse(v);
       } catch {
         return fallback;
       }
@@ -32,13 +35,18 @@
       try {
         localStorage.setItem(key, JSON.stringify(value));
       } catch {
-        /* armazenamento indisponível (aba anônima): segue sem persistir */
+        /* armazenamento indisponível (aba anônima, bloqueio): segue sem persistir */
       }
     },
   };
 
-  const whatsappUrl = (text = 'Olá! Vim pelo site da Atual Móveis e gostaria de atendimento.') =>
-    `https://wa.me/${D.store.whatsapp}?text=${encodeURIComponent(text)}`;
+  const wa = (text) => `https://wa.me/${S.whatsapp}?text=${encodeURIComponent(text)}`;
+  const WA_TEXT = {
+    help: 'Olá! Vim pelo site da Atual e gostaria de ajuda.',
+    track: 'Olá! Gostaria de acompanhar o meu pedido.',
+  };
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Atual Móveis e Eletro, ${S.address}`)}`;
+  const productUrl = (p) => wa(`Olá! Tenho interesse no produto: ${p.name} (${brl(p.price)} no PIX). Pode me passar mais informações?`);
 
   let toastTimer;
   function toast(msg) {
@@ -46,143 +54,17 @@
     el.textContent = msg;
     el.classList.add('is-visible');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('is-visible'), 2600);
+    toastTimer = setTimeout(() => el.classList.remove('is-visible'), 2400);
   }
 
-  /* ---------- Barra de anúncio ---------- */
-  function initAnnouncement() {
-    const track = $('[data-announcement]');
-    track.innerHTML = D.announcements
-      .map(
-        (a, i) => `<p class="announcement__msg${i === 0 ? ' is-active' : ''}" ${i ? 'aria-hidden="true"' : ''}>
-          <span>${esc(a.text)}</span>
-          <a class="announcement__cta" href="${a.href}">${esc(a.cta)}</a>
-        </p>`
-      )
-      .join('');
-    const msgs = $$('.announcement__msg', track);
-    if (msgs.length < 2 || reduceMotion) return;
-    let i = 0;
-    setInterval(() => {
-      msgs[i].classList.remove('is-active');
-      msgs[i].setAttribute('aria-hidden', 'true');
-      i = (i + 1) % msgs.length;
-      msgs[i].classList.add('is-active');
-      msgs[i].removeAttribute('aria-hidden');
-    }, 5000);
-  }
-
-  /* ---------- Cabeçalho ---------- */
-  function initHeader() {
-    const header = $('[data-header]');
-    const onScroll = () => header.classList.toggle('is-solid', window.scrollY > 10);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    header.addEventListener('focusin', () => header.classList.add('is-focus'));
-    header.addEventListener('focusout', () => header.classList.remove('is-focus'));
-  }
-
-  /* ---------- Slideshow ---------- */
-  function initHero() {
-    const wrap = $('[data-hero]');
-    const dots = $('[data-hero-dots]');
-    wrap.innerHTML = D.hero
-      .map((s, i) => {
-        const p = productById[s.product];
-        return `<div class="hero__slide${i === 0 ? ' is-active' : ''}" role="group" aria-roledescription="slide" aria-label="${i + 1} de ${D.hero.length}" ${i ? 'aria-hidden="true"' : ''}>
-          ${picture(s.image, '', { eager: i === 0, cls: 'hero__img' })}
-          <div class="hero__content page-width">
-            <p class="hero__kicker">${esc(s.kicker)}</p>
-            <h2 class="hero__title">${esc(s.title)}</h2>
-            <p class="hero__text">${esc(s.text)}</p>
-          </div>
-          ${
-            p
-              ? `<div class="hero__shop">
-                  <span class="hero__shop-tag">No ambiente</span>
-                  <a class="hero__card" href="#" data-product-link="${p.id}">
-                    ${picture(p.image, '', { sizes: '64px' })}
-                    <span class="hero__card-info">
-                      <span class="hero__card-name">${esc(p.name)}</span>
-                      <span class="hero__card-price">${brl(pixPrice(p))} <small>no PIX</small></span>
-                    </span>
-                    ${icon('i-arrow', 'icon icon--sm')}
-                  </a>
-                </div>`
-              : ''
-          }
-        </div>`;
-      })
-      .join('');
-    dots.innerHTML = D.hero
-      .map((_, i) => `<button type="button" class="hero__dot${i === 0 ? ' is-active' : ''}" aria-label="Ir para o slide ${i + 1}"></button>`)
-      .join('');
-
-    const slides = $$('.hero__slide', wrap);
-    const dotBtns = $$('.hero__dot', dots);
-    let current = 0;
-    let timer;
-
-    const go = (n) => {
-      slides[current].classList.remove('is-active');
-      slides[current].setAttribute('aria-hidden', 'true');
-      dotBtns[current].classList.remove('is-active');
-      current = (n + slides.length) % slides.length;
-      slides[current].classList.add('is-active');
-      slides[current].removeAttribute('aria-hidden');
-      dotBtns[current].classList.add('is-active');
-    };
-    const play = () => {
-      if (reduceMotion) return;
-      clearInterval(timer);
-      timer = setInterval(() => go(current + 1), 6000);
-    };
-    const stop = () => clearInterval(timer);
-
-    $('[data-hero-prev]').addEventListener('click', () => { go(current - 1); play(); });
-    $('[data-hero-next]').addEventListener('click', () => { go(current + 1); play(); });
-    dotBtns.forEach((b, i) => b.addEventListener('click', () => { go(i); play(); }));
-
-    const hero = wrap.closest('.hero');
-    hero.addEventListener('mouseenter', stop);
-    hero.addEventListener('mouseleave', play);
-    hero.addEventListener('focusin', stop);
-    hero.addEventListener('focusout', play);
-
-    let startX = null;
-    hero.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; stop(); }, { passive: true });
-    hero.addEventListener('touchend', (e) => {
-      if (startX === null) return;
-      const dx = e.changedTouches[0].clientX - startX;
-      if (Math.abs(dx) > 40) go(current + (dx < 0 ? 1 : -1));
-      startX = null;
-      play();
-    });
-    play();
-  }
-
-  /* ---------- Categorias ---------- */
-  function initCategories() {
-    const track = $('[data-categories]');
-    track.innerHTML = D.categories
-      .map(
-        (c) => `<a class="category" href="${c.href}">
-          <span class="category__media">${picture(c.image, '', { sizes: '140px' })}</span>
-          <span class="category__name">${esc(c.name)}</span>
-        </a>`
-      )
-      .join('');
-    dragScroll(track);
-  }
-
-  // Arrastar com o mouse em trilhos horizontais (no toque o scroll nativo já resolve).
+  // Arrastar trilhos horizontais com o mouse (no toque o scroll nativo resolve).
   function dragScroll(el) {
-    let down = false;
-    let moved = false;
     let startX = 0;
     let startLeft = 0;
+    let down = false;
+    let moved = false;
     el.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'mouse') return;
+      if (e.pointerType !== 'mouse' || e.button !== 0) return;
       down = true;
       moved = false;
       startX = e.clientX;
@@ -191,15 +73,21 @@
     window.addEventListener('pointermove', (e) => {
       if (!down) return;
       const dx = e.clientX - startX;
-      if (Math.abs(dx) > 4) {
+      if (!moved && Math.abs(dx) > 5) {
         moved = true;
         el.classList.add('is-dragging');
       }
-      el.scrollLeft = startLeft - dx;
+      if (moved) el.scrollLeft = startLeft - dx;
     });
     window.addEventListener('pointerup', () => {
+      if (!down) return;
       down = false;
-      el.classList.remove('is-dragging');
+      if (moved) {
+        el.classList.remove('is-dragging');
+        // reencaixa no card mais próximo depois de soltar
+        const step = el.firstElementChild ? el.firstElementChild.getBoundingClientRect().width + parseFloat(getComputedStyle(el).columnGap || 0) : 0;
+        if (step) el.scrollTo({ left: Math.round(el.scrollLeft / step) * step, behavior: 'smooth' });
+      }
     });
     el.addEventListener('click', (e) => {
       if (moved) {
@@ -211,178 +99,277 @@
     el.addEventListener('dragstart', (e) => e.preventDefault());
   }
 
-  /* ---------- Cards de produto ---------- */
-  const badgeLabel = { novo: 'Lançamento', frete: 'Frete grátis', oferta: 'Oferta' };
-
-  function productCard(p) {
-    const off = p.compareAt ? Math.round((1 - p.price / p.compareAt) * 100) : 0;
-    return `<article class="card" data-id="${p.id}">
-      <div class="card__media">
-        <a href="#" class="card__img-link" data-product-link="${p.id}" tabindex="-1" aria-hidden="true">
-          ${picture(p.image, '', { sizes: '(max-width: 749px) 45vw, 264px' })}
-        </a>
-        ${p.badge ? `<span class="badge badge--${p.badge}">${badgeLabel[p.badge]}</span>` : ''}
-        <div class="card__actions">
-          <button class="card__icon" type="button" aria-label="Favoritar ${esc(p.name)}" aria-pressed="false" data-wish="${p.id}">
-            ${icon('i-heart', 'icon icon--sm icon-heart-empty')}${icon('i-heart-fill', 'icon icon--sm icon-heart-full')}
-          </button>
-          ${p.freeShipping ? `<span class="card__icon card__icon--static" title="Frete grátis">${icon('i-truck', 'icon icon--sm')}</span>` : ''}
-        </div>
-        <button class="card__add" type="button" aria-label="Adicionar ${esc(p.name)} ao carrinho" data-add="${p.id}">${icon('i-cart-plus', 'icon icon--sm')}</button>
-      </div>
-      <div class="card__info">
-        <h3 class="card__title"><a href="#" data-product-link="${p.id}">${esc(p.name)}</a></h3>
-        <p class="card__price">
-          ${p.compareAt ? `<s class="card__compare"><span class="visually-hidden">De </span>${brl(p.compareAt)}</s>` : ''}
-          <span class="card__sale ${off >= 30 ? 'is-hot' : ''}"><span class="visually-hidden">Por </span>${brl(p.price)}</span>
-        </p>
-        <p class="card__pix">${brl(pixPrice(p))} no PIX <span>ou ${D.store.installments}x de ${brl(p.price / D.store.installments)}</span></p>
-        ${
-          p.swatches && p.swatches.length
-            ? `<div class="swatches" role="radiogroup" aria-label="Cores">
-                ${p.swatches
-                  .map(
-                    (c, i) => `<button type="button" role="radio" class="swatch${i === 0 ? ' is-selected' : ''}" style="--swatch:${c}" aria-checked="${i === 0}" aria-label="Cor ${i + 1}"></button>`
-                  )
-                  .join('')}
-              </div>`
-            : ''
-        }
-      </div>
-    </article>`;
+  // Pontos de paginação de um trilho horizontal.
+  function pagerDots(track, dotsEl) {
+    const pages = () => Math.max(1, Math.ceil((track.scrollWidth - 4) / Math.max(1, track.clientWidth)));
+    const render = () => {
+      const n = pages();
+      dotsEl.innerHTML = n > 1 ? Array.from({ length: n }, (_, i) => `<button type="button" aria-label="Ir para a página ${i + 1}" data-page="${i}"></button>`).join('') : '';
+      update();
+    };
+    const update = () => {
+      const max = track.scrollWidth - track.clientWidth;
+      const n = pages();
+      const page = max <= 0 ? 0 : Math.round((track.scrollLeft / max) * (n - 1));
+      $$('button', dotsEl).forEach((b, i) => {
+        b.classList.toggle('is-active', i === page);
+        b.setAttribute('aria-current', i === page ? 'true' : 'false');
+      });
+    };
+    dotsEl.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-page]');
+      if (!b) return;
+      const max = track.scrollWidth - track.clientWidth;
+      track.scrollTo({ left: (max * +b.dataset.page) / Math.max(1, pages() - 1), behavior: 'smooth' });
+    });
+    track.addEventListener('scroll', () => requestAnimationFrame(update), { passive: true });
+    window.addEventListener('resize', render);
+    render();
+    return { render, update };
   }
 
-  function initProducts() {
-    $$('[data-products]').forEach((track) => {
-      const ids = D.sections[track.dataset.products] || [];
-      track.innerHTML = ids.map((id) => productById[id]).filter(Boolean).map(productCard).join('');
+  /* ---------- Barra de anúncio ---------- */
+  function initAnnouncement() {
+    const bar = $('[data-announcement]');
+    bar.innerHTML = D.announcements
+      .map((a, i) => `<p class="announcement__msg${i ? '' : ' is-active'}"><span>${esc(a.text)}</span><a class="announcement__cta" href="${a.href}">${esc(a.cta)}</a></p>`)
+      .join('');
+    const msgs = $$('.announcement__msg', bar);
+    if (msgs.length < 2) return;
+    let i = 0;
+    setInterval(() => {
+      if (reduceMotion.matches) return;
+      msgs[i].classList.remove('is-active');
+      i = (i + 1) % msgs.length;
+      msgs[i].classList.add('is-active');
+    }, 5000);
+  }
+
+  /* ---------- Cabeçalho ---------- */
+  const header = $('[data-header]');
+  const panels = new Set();
+
+  function setPanel(name, open) {
+    if (open) panels.add(name);
+    else panels.delete(name);
+    header.classList.toggle('has-panel', panels.size > 0);
+  }
+
+  function initHeader() {
+    let ticking = false;
+    const onScroll = () => {
+      ticking = false;
+      const y = window.scrollY;
+      header.classList.toggle('is-scrolled', y > 0);
+      header.classList.toggle('is-compact', y > 60);
+    };
+    onScroll();
+    window.addEventListener('scroll', () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(onScroll);
+      }
+    }, { passive: true });
+
+    // Navegação em linha + mega menu (≥ 1600px)
+    const nav = $('[data-inline-nav]');
+    nav.innerHTML = D.menu
+      .filter((m) => m.href !== 'maps')
+      .map((m) => {
+        if (!m.children) {
+          return `<div class="nav-item"><a class="nav-item__link${m.highlight ? ' is-hot' : ''}" href="${m.href}">${esc(m.label)}</a></div>`;
+        }
+        return `<div class="nav-item" data-mega>
+          <a class="nav-item__link" href="#" aria-haspopup="true">${esc(m.label)} ${icon('i-caret')}</a>
+          <div class="mega">
+            ${m.children
+              .map((g) => `<div class="mega__col"><a class="mega__title" href="#">${esc(g.label)}</a>${g.links.map((l) => `<a href="#">${esc(l)}</a>`).join('')}</div>`)
+              .join('')}
+          </div>
+        </div>`;
+      })
+      .join('');
+    $$('[data-mega]', nav).forEach((item) => {
+      item.addEventListener('mouseenter', () => setPanel('mega', true));
+      item.addEventListener('mouseleave', () => setPanel('mega', false));
+      item.addEventListener('focusin', () => setPanel('mega', true));
+      item.addEventListener('focusout', (e) => {
+        if (!item.contains(e.relatedTarget)) setPanel('mega', false);
+      });
+      $('.nav-item__link', item).addEventListener('click', (e) => e.preventDefault());
     });
 
+    // Conta (entrar / cadastrar)
+    const acc = $('[data-account]');
+    const accBtn = $('[data-account-toggle]', acc);
+    const accMenu = $('.account__menu', acc);
+    const setAcc = (open) => {
+      accMenu.hidden = !open;
+      accBtn.setAttribute('aria-expanded', String(open));
+    };
+    accBtn.addEventListener('click', () => setAcc(accMenu.hidden));
     document.addEventListener('click', (e) => {
-      const sw = e.target.closest('.swatch');
-      if (sw) {
-        const group = sw.parentElement;
-        $$('.swatch', group).forEach((b) => {
-          b.classList.toggle('is-selected', b === sw);
-          b.setAttribute('aria-checked', String(b === sw));
-        });
+      if (!acc.contains(e.target)) setAcc(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !accMenu.hidden) {
+        setAcc(false);
+        accBtn.focus();
+      }
+    });
+  }
+
+  /* ---------- Trava de rolagem + foco ---------- */
+  let lockCount = 0;
+  const lockScroll = (on) => {
+    lockCount = Math.max(0, lockCount + (on ? 1 : -1));
+    document.body.classList.toggle('is-locked', lockCount > 0);
+  };
+
+  const focusables = (root) =>
+    $$('a[href], button:not([disabled]), input:not([type="hidden"]), summary, [tabindex]:not([tabindex="-1"])', root).filter(
+      (el) => el.offsetWidth || el.offsetHeight || el.getClientRects().length
+    );
+
+  function trapTab(e, root) {
+    const f = focusables(root);
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  /* ---------- Menu lateral ---------- */
+  const menu = { el: null, overlay: null, btn: null, open: false, lastFocus: null };
+
+  function menuMarkup() {
+    const groupLinks = (g) => `<ul class="msub__links">${g.links.map((l) => `<li><a href="#">${esc(l)}</a></li>`).join('')}<li><a href="#">Ver tudo</a></li></ul>`;
+    const items = D.menu.map((m, i) => {
+      if (!m.children) {
+        const href = m.href === 'maps' ? mapsUrl : m.href;
+        const ext = m.href === 'maps' ? ' target="_blank" rel="noopener"' : '';
+        return `<li><a class="mpill${m.highlight ? ' is-hot' : ''}" href="${href}"${ext} data-menu-link>${esc(m.label)}</a></li>`;
+      }
+      const subId = `msub-${i}`;
+      const inner =
+        m.children.length === 1
+          ? groupLinks(m.children[0])
+          : m.children
+              .map((g, j) => {
+                const gid = `${subId}-${j}`;
+                return `<div class="msub__group">
+                  <button class="msub__toggle" type="button" aria-expanded="false" aria-controls="${gid}">${esc(g.label)} <span class="plus" aria-hidden="true"></span></button>
+                  <div id="${gid}" hidden>${groupLinks(g)}</div>
+                </div>`;
+              })
+              .join('');
+      return `<li>
+        <button class="mpill" type="button" aria-expanded="false" aria-controls="${subId}">${esc(m.label)} <span class="plus" aria-hidden="true"></span></button>
+        <div class="msub" id="${subId}" hidden>${inner}</div>
+      </li>`;
+    });
+    items.push(`<li><a class="mpill mpill--cta" href="${wa(WA_TEXT.track)}" target="_blank" rel="noopener">Rastrear pedido</a></li>`);
+    return items.join('');
+  }
+
+  function toggleMenu(force) {
+    const open = force ?? !menu.open;
+    if (open === menu.open) return;
+    if (open) closeDrawer(false);
+    menu.open = open;
+    if (open) {
+      menu.lastFocus = document.activeElement;
+      document.documentElement.style.setProperty('--menu-top', `${Math.max(0, header.getBoundingClientRect().bottom)}px`);
+      menu.overlay.hidden = false;
+      requestAnimationFrame(() => menu.overlay.classList.add('is-visible'));
+    } else {
+      menu.overlay.classList.remove('is-visible');
+      setTimeout(() => {
+        if (!menu.open) menu.overlay.hidden = true;
+      }, 160);
+    }
+    menu.el.classList.toggle('is-open', open);
+    menu.el.setAttribute('aria-hidden', String(!open));
+    menu.btn.setAttribute('aria-expanded', String(open));
+    menu.btn.setAttribute('aria-label', open ? 'Fechar menu' : 'Abrir menu');
+    setPanel('menu', open);
+    lockScroll(open);
+    if (open) setTimeout(() => focusables(menu.el)[0]?.focus(), 60);
+    else if (menu.lastFocus && document.activeElement && menu.el.contains(document.activeElement)) menu.btn.focus();
+  }
+
+  function initMenu() {
+    menu.el = $('[data-menu-drawer]');
+    menu.overlay = $('[data-menu-overlay]');
+    menu.btn = $('[data-menu-toggle]');
+    $('[data-menu-list]').innerHTML = menuMarkup();
+    menu.btn.addEventListener('click', () => toggleMenu());
+    menu.overlay.addEventListener('click', () => toggleMenu(false));
+    menu.el.addEventListener('click', (e) => {
+      const t = e.target.closest('[aria-controls]');
+      if (t && menu.el.contains(t)) {
+        const panel = document.getElementById(t.getAttribute('aria-controls'));
+        const open = t.getAttribute('aria-expanded') !== 'true';
+        t.setAttribute('aria-expanded', String(open));
+        t.classList.toggle('is-open', open);
+        panel.hidden = !open;
         return;
       }
-      const link = e.target.closest('[data-product-link]');
-      if (link) {
-        e.preventDefault();
-        const p = productById[link.dataset.productLink];
-        toast(`Página de produto em breve: ${p.name}`);
-      }
+      if (e.target.closest('[data-menu-link]') || e.target.closest('.msub__links a')) toggleMenu(false);
+    });
+    menu.el.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') trapTab(e, menu.el);
+    });
+    window.addEventListener('resize', () => {
+      if (menu.open) document.documentElement.style.setProperty('--menu-top', `${Math.max(0, header.getBoundingClientRect().bottom)}px`);
     });
   }
 
-  /* ---------- Carrosséis ---------- */
-  function initCarousels() {
-    $$('[data-carousel]').forEach((root) => {
-      const track = $('[data-carousel-track]', root);
-      const prev = $('[data-carousel-prev]', root);
-      const next = $('[data-carousel-next]', root);
-      const dots = $('[data-carousel-dots]', root);
-      dragScroll(track);
-
-      const step = () => {
-        const card = track.firstElementChild;
-        if (!card) return track.clientWidth;
-        const gap = parseFloat(getComputedStyle(track).columnGap) || 0;
-        const perView = Math.max(1, Math.round((track.clientWidth + gap) / (card.offsetWidth + gap)));
-        return perView * (card.offsetWidth + gap);
-      };
-      const pages = () => Math.max(1, Math.ceil((track.scrollWidth - 2) / step()));
-
-      const renderDots = () => {
-        const n = pages();
-        dots.innerHTML = n > 1 ? Array.from({ length: n }, (_, i) => `<button type="button" aria-label="Página ${i + 1}" data-page="${i}"></button>`).join('') : '';
-        update();
-      };
-      const update = () => {
-        const max = track.scrollWidth - track.clientWidth;
-        prev.disabled = track.scrollLeft <= 2;
-        next.disabled = track.scrollLeft >= max - 2;
-        root.classList.toggle('is-scrollable', max > 2);
-        const page = Math.round(track.scrollLeft / step());
-        $$('button', dots).forEach((b, i) => b.classList.toggle('is-active', i === Math.min(page, pages() - 1)));
-      };
-
-      prev.addEventListener('click', () => track.scrollBy({ left: -step(), behavior: 'smooth' }));
-      next.addEventListener('click', () => track.scrollBy({ left: step(), behavior: 'smooth' }));
-      dots.addEventListener('click', (e) => {
-        const b = e.target.closest('[data-page]');
-        if (b) track.scrollTo({ left: +b.dataset.page * step(), behavior: 'smooth' });
-      });
-      track.addEventListener('scroll', () => requestAnimationFrame(update), { passive: true });
-      window.addEventListener('resize', renderDots);
-      renderDots();
-    });
-  }
-
-  /* ---------- Marquee ---------- */
-  function initMarquee() {
-    const track = $('[data-marquee]');
-    const group = `<ul class="marquee__group">${D.marquee.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`;
-    track.innerHTML = group + group.replace('<ul class="marquee__group">', '<ul class="marquee__group" aria-hidden="true">');
-  }
-
-  /* ---------- Editorial e ambientes ---------- */
-  function initEditorial() {
-    $('[data-editorial]').innerHTML = D.editorial
-      .map(
-        (e) => `<a class="editorial__item" href="${e.href}">
-          ${picture(e.image, '', { sizes: '(max-width: 749px) 100vw, 50vw' })}
-          <span class="editorial__text">
-            <span class="editorial__title">${esc(e.title)}</span>
-            <span class="editorial__sub">${esc(e.text)}</span>
-          </span>
-        </a>`
-      )
-      .join('');
-    $('[data-rooms]').innerHTML = D.rooms
-      .map(
-        (r) => `<a class="room" href="${r.href}">
-          ${picture(r.image, '', { sizes: '(max-width: 749px) 100vw, 25vw' })}
-          <span class="room__title">${esc(r.title)}</span>
-        </a>`
-      )
-      .join('');
-  }
-
-  /* ---------- Gavetas (menu, carrinho, favoritos) ---------- */
-  let openDrawerEl = null;
-  let lastFocus = null;
+  /* ---------- Gavetas da direita ---------- */
+  const drawer = { el: null, lastFocus: null };
+  const onOpen = {};
+  const overlay = $('[data-overlay]');
 
   function openDrawer(id) {
     const el = document.getElementById(id);
-    if (!el) return;
-    if (openDrawerEl) closeDrawer(false);
-    lastFocus = document.activeElement;
-    openDrawerEl = el;
+    if (!el || drawer.el === el) return;
+    toggleMenu(false);
+    const prevFocus = drawer.el ? drawer.lastFocus : document.activeElement;
+    if (drawer.el) closeDrawer(false);
+    drawer.el = el;
+    drawer.lastFocus = prevFocus;
     el.classList.add('is-open');
     el.setAttribute('aria-hidden', 'false');
-    const overlay = $('[data-overlay]');
     overlay.hidden = false;
     requestAnimationFrame(() => overlay.classList.add('is-visible'));
-    document.body.classList.add('no-scroll');
+    lockScroll(true);
     $$(`[aria-controls="${id}"]`).forEach((b) => b.setAttribute('aria-expanded', 'true'));
-    setTimeout(() => ($('button, a, input', el) || el).focus(), 50);
+    onOpen[id]?.();
+    if (id === 'search-drawer') setTimeout(() => $('[data-search-input]').focus(), 60);
+    else setTimeout(() => focusables(el)[0]?.focus(), 60);
   }
 
-  function closeDrawer(restoreFocus = true) {
-    if (!openDrawerEl) return;
-    const el = openDrawerEl;
+  function closeDrawer(restore = true) {
+    const el = drawer.el;
+    if (!el) return;
+    drawer.el = null;
     el.classList.remove('is-open');
     el.setAttribute('aria-hidden', 'true');
     $$(`[aria-controls="${el.id}"]`).forEach((b) => b.setAttribute('aria-expanded', 'false'));
-    const overlay = $('[data-overlay]');
-    overlay.classList.remove('is-visible');
-    setTimeout(() => { if (!openDrawerEl) overlay.hidden = true; }, 300);
-    document.body.classList.remove('no-scroll');
-    openDrawerEl = null;
-    if (restoreFocus && lastFocus) lastFocus.focus();
+    lockScroll(false);
+    if (restore) {
+      overlay.classList.remove('is-visible');
+      setTimeout(() => {
+        if (!drawer.el) overlay.hidden = true;
+      }, 250);
+      drawer.lastFocus?.focus?.();
+    }
   }
 
   function initDrawers() {
@@ -393,128 +380,431 @@
         openDrawer(opener.dataset.openDrawer);
         return;
       }
-      if (e.target.closest('[data-close-drawer]') || e.target.matches('[data-overlay]')) closeDrawer();
+      const search = e.target.closest('[data-open-search]');
+      if (search) {
+        e.preventDefault();
+        openDrawer('search-drawer');
+        return;
+      }
+      if (e.target.closest('[data-close]') || e.target === overlay) closeDrawer();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        closeDrawer();
-        closeSearch();
+        if (drawer.el) closeDrawer();
+        else if (menu.open) {
+          toggleMenu(false);
+          menu.btn.focus();
+        }
       }
-      if (e.key === 'Tab' && openDrawerEl) {
-        const f = $$('a[href], button:not([disabled]), input, summary, [tabindex="0"]', openDrawerEl).filter((n) => n.offsetParent !== null);
-        if (!f.length) return;
-        const first = f[0];
-        const last = f[f.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      if (e.key === 'Tab' && drawer.el) trapTab(e, drawer.el);
+    });
+  }
+
+  /* ---------- Slideshow ---------- */
+  function pinMarkup(p) {
+    return `<a class="pin" href="${productUrl(p)}" target="_blank" rel="noopener" data-product="${p.id}">
+      <span class="pin__thumb">${img(p.image)}</span>
+      <span class="pin__info">
+        <span class="pin__name">${esc(p.name)}</span>
+        <span class="pin__price">${brl(p.price)} <small>no PIX</small></span>
+      </span>
+      ${icon('i-arrow', 'pin__arrow')}
+    </a>`;
+  }
+
+  function initHero() {
+    const root = $('[data-hero]');
+    const wrap = $('[data-hero-slides]');
+    const dots = $('[data-hero-dots]');
+    wrap.innerHTML = D.hero
+      .map((s, i) => {
+        const pins = (s.products || []).map((id) => byId[id]).filter(Boolean);
+        return `<div class="hero__slide${i ? '' : ' is-active'}" role="group" aria-roledescription="slide" aria-label="${i + 1} de ${D.hero.length}: ${esc(s.title)}"${i ? ' aria-hidden="true"' : ''}>
+          <picture>
+            <source media="(max-width: 749px)" type="image/webp" srcset="assets/img/${s.image}-m.webp">
+            <source media="(max-width: 749px)" srcset="assets/img/${s.image}-m.jpg">
+            <source type="image/webp" srcset="assets/img/${s.image}-wide.webp">
+            <img class="hero__img" src="assets/img/${s.image}-wide.jpg" alt="" ${i ? 'loading="lazy"' : 'fetchpriority="high"'} decoding="async">
+          </picture>
+          <a class="hero__link" href="${s.href}" aria-label="${esc(`${s.title} — ${s.text}`)}"${i ? ' tabindex="-1"' : ''}></a>
+          <div class="hero__copy" aria-hidden="true">
+            <p class="hero__kicker">${esc(s.kicker)}</p>
+            <p class="hero__title">${esc(s.title)}</p>
+            <p class="hero__text">${esc(s.text)}</p>
+          </div>
+          ${
+            pins.length
+              ? `<div class="pins">
+                  <div class="pins__head"><span class="pins__label">No ambiente</span><div class="pins__dots" data-pin-dots></div></div>
+                  <div class="pins__list" data-pin-list>${pins.map(pinMarkup).join('')}</div>
+                </div>`
+              : ''
+          }
+        </div>`;
+      })
+      .join('');
+    dots.innerHTML = D.hero.map((_, i) => `<button type="button" class="hero__dot${i ? '' : ' is-active'}" aria-label="Ir para o slide ${i + 1}"${i ? '' : ' aria-current="true"'}></button>`).join('');
+
+    const slides = $$('.hero__slide', wrap);
+    const dotBtns = $$('.hero__dot', dots);
+    let current = 0;
+    let timer = null;
+    let hovering = false;
+
+    const setInteractive = (slide, on) => {
+      if (on) slide.removeAttribute('aria-hidden');
+      else slide.setAttribute('aria-hidden', 'true');
+      $$('a', slide).forEach((a) => (on ? a.removeAttribute('tabindex') : a.setAttribute('tabindex', '-1')));
+    };
+    slides.forEach((s, i) => setInteractive(s, i === 0));
+
+    const go = (n) => {
+      const next = (n + slides.length) % slides.length;
+      if (next === current) return;
+      slides[current].classList.remove('is-active');
+      setInteractive(slides[current], false);
+      dotBtns[current].classList.remove('is-active');
+      dotBtns[current].removeAttribute('aria-current');
+      current = next;
+      slides[current].classList.add('is-active');
+      setInteractive(slides[current], true);
+      dotBtns[current].classList.add('is-active');
+      dotBtns[current].setAttribute('aria-current', 'true');
+    };
+    const stop = () => {
+      clearInterval(timer);
+      timer = null;
+    };
+    const play = () => {
+      stop();
+      if (reduceMotion.matches || hovering || document.hidden) return;
+      timer = setInterval(() => go(current + 1), 6000);
+    };
+
+    $('[data-hero-prev]').addEventListener('click', () => { go(current - 1); play(); });
+    $('[data-hero-next]').addEventListener('click', () => { go(current + 1); play(); });
+    dotBtns.forEach((b, i) => b.addEventListener('click', () => { go(i); play(); }));
+    root.addEventListener('mouseenter', () => { hovering = true; stop(); });
+    root.addEventListener('mouseleave', () => { hovering = false; play(); });
+    root.addEventListener('focusin', stop);
+    root.addEventListener('focusout', (e) => { if (!root.contains(e.relatedTarget)) play(); });
+    document.addEventListener('visibilitychange', play);
+
+    // Deslizar no toque (fora da lista de produtos)
+    let sx = null;
+    let sy = null;
+    root.addEventListener('touchstart', (e) => {
+      if (e.target.closest('[data-pin-list]')) return stop();
+      sx = e.touches[0].clientX;
+      sy = e.touches[0].clientY;
+      stop();
+    }, { passive: true });
+    root.addEventListener('touchend', (e) => {
+      if (sx !== null) {
+        const dx = e.changedTouches[0].clientX - sx;
+        const dy = e.changedTouches[0].clientY - sy;
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) go(current + (dx < 0 ? 1 : -1));
       }
+      sx = null;
+      play();
     });
 
-    $('[data-menu]').innerHTML = `<ul class="menu__list">${D.menu
-      .map((m) =>
-        m.children
-          ? `<li><details class="menu__group"><summary>${esc(m.label)} ${icon('i-chev-d', 'icon icon--sm')}</summary>
-              <ul class="menu__sub"><li><a href="#">Ver tudo em ${esc(m.label)}</a></li>${m.children.map((c) => `<li><a href="#">${esc(c)}</a></li>`).join('')}</ul></details></li>`
-          : `<li><a class="menu__link${m.highlight ? ' is-hot' : ''}" href="${m.href}" data-close-drawer>${esc(m.label)}</a></li>`
-      )
-      .join('')}</ul>`;
+    $$('[data-pin-list]', wrap).forEach((list) => {
+      dragScroll(list);
+      const d = $('[data-pin-dots]', list.parentElement);
+      if (d && list.children.length > 1) pagerDots(list, d);
+    });
+    play();
+  }
+
+  /* ---------- Categorias ---------- */
+  function initCategories() {
+    const track = $('[data-cats]');
+    track.innerHTML = D.categories
+      .map((c) => `<a class="cat" href="${c.href}"><span class="cat__tile">${img(c.image, { sizes: '140px' })}</span><span class="cat__name">${esc(c.name)}</span></a>`)
+      .join('');
+    dragScroll(track);
+    pagerDots(track, $('[data-cats-dots]'));
+  }
+
+  /* ---------- Cards de produto ---------- */
+  const BADGE = { novo: 'Lançamento', frete: 'Frete grátis' };
+
+  function card(p, forceBadge) {
+    const badge = forceBadge || p.badge;
+    const wished = wishlist.includes(p.id);
+    return `<article class="card" data-id="${p.id}">
+      <div class="card__media">
+        ${img(p.image, { cls: 'card__img1', sizes: '(max-width: 749px) 45vw, 264px' })}
+        ${p.image2 ? img(p.image2, { cls: 'card__img2', sizes: '(max-width: 749px) 45vw, 264px' }) : ''}
+      </div>
+      <div class="card__ui">
+        <div class="card__badges">
+          ${badge && BADGE[badge] ? `<span class="badge">${BADGE[badge]}</span>` : ''}
+          <div class="card__flags">
+            <button class="glass card__wish${wished ? ' is-active' : ''}" type="button" aria-pressed="${wished}" aria-label="Favoritar ${esc(p.name)}" data-wish="${p.id}">
+              ${icon('i-heart', 'i-empty')}${icon('i-heart-fill', 'i-full')}
+            </button>
+            ${p.fastDelivery ? `<span class="glass card__truck" title="Pronta entrega">${icon('i-truck')}<span class="visually-hidden">Pronta entrega</span></span>` : ''}
+            ${p.promo ? `<span class="card__seal" title="Super oferta">${icon('i-seal')}<span class="visually-hidden">Super oferta</span></span>` : ''}
+          </div>
+        </div>
+        <button class="card__add" type="button" aria-label="Adicionar ${esc(p.name)} ao carrinho" data-add="${p.id}">${icon('i-cart-plus')}</button>
+      </div>
+      <div class="card__info">
+        <h3 class="card__title"><a class="card__link" href="${productUrl(p)}" target="_blank" rel="noopener" data-product="${p.id}">${esc(p.name)}</a></h3>
+        <p class="card__price">
+          ${p.compareAt ? `<s class="card__compare"><span class="visually-hidden">De </span>${brl(p.compareAt)}</s>` : ''}
+          <span class="card__sale${p.promo ? ' is-promo' : ''}"><span class="visually-hidden">Por </span>${brl(p.price)}</span>
+        </p>
+        ${
+          p.swatches && p.swatches.length
+            ? `<div class="swatches" role="group" aria-label="Cores disponíveis">${p.swatches
+                .map(
+                  (s, i) =>
+                    `<button class="swatch" type="button" style="--swatch:${esc(s.color)}" aria-pressed="${i === 0}" aria-label="Cor ${i + 1} de ${p.swatches.length}" data-swatch="${i}"><span></span></button>`
+                )
+                .join('')}</div>`
+            : ''
+        }
+      </div>
+    </article>`;
+  }
+
+  function initShelves() {
+    $$('[data-products]').forEach((track) => {
+      const ids = D.sections[track.dataset.products] || [];
+      track.innerHTML = ids.map((id) => byId[id]).filter(Boolean).map((p) => card(p, track.dataset.badgeAll)).join('');
+    });
+
+    $$('[data-slider]').forEach((root) => {
+      const track = $('[data-track]', root);
+      const prev = $('[data-prev]', root);
+      const next = $('[data-next]', root);
+      const gap = () => parseFloat(getComputedStyle(track).columnGap) || 0;
+      const update = () => {
+        const max = track.scrollWidth - track.clientWidth;
+        prev.disabled = track.scrollLeft <= 2;
+        next.disabled = track.scrollLeft >= max - 2;
+      };
+      prev.addEventListener('click', () => track.scrollBy({ left: -(track.clientWidth + gap()), behavior: 'smooth' }));
+      next.addEventListener('click', () => track.scrollBy({ left: track.clientWidth + gap(), behavior: 'smooth' }));
+      track.addEventListener('scroll', () => requestAnimationFrame(update), { passive: true });
+      window.addEventListener('resize', update);
+      dragScroll(track);
+      pagerDots(track, $('[data-dots]', root));
+      update();
+    });
+
+    document.addEventListener('click', (e) => {
+      const sw = e.target.closest('[data-swatch]');
+      if (!sw) return;
+      const cardEl = sw.closest('.card');
+      const p = byId[cardEl.dataset.id];
+      const s = p.swatches[+sw.dataset.swatch];
+      $$('[data-swatch]', cardEl).forEach((b) => b.setAttribute('aria-pressed', String(b === sw)));
+      if (s.image) {
+        const pic = $('.card__img1', cardEl).parentElement;
+        $('source', pic).srcset = `assets/img/${s.image}.webp`;
+        $('img', pic).src = `assets/img/${s.image}.jpg`;
+      }
+    });
+  }
+
+  /* ---------- Faixa rolante ---------- */
+  function initMarquee() {
+    const track = $('[data-marquee]');
+    const group = (hidden) => `<ul class="marquee__group"${hidden ? ' aria-hidden="true"' : ''}>${D.marquee.map((t) => `<li class="marquee__item">${esc(t)}</li>`).join('')}</ul>`;
+    let anim = null;
+    const build = () => {
+      track.innerHTML = group(false);
+      const w = track.firstElementChild.getBoundingClientRect().width || 1;
+      // Repete o grupo até cobrir duas telas, para o loop não deixar buraco em monitores largos.
+      const copies = Math.max(2, Math.ceil((window.innerWidth * 2) / w) + 1);
+      track.innerHTML = group(false) + Array.from({ length: copies - 1 }, () => group(true)).join('');
+      anim?.cancel();
+      anim = null;
+      if (reduceMotion.matches) return;
+      anim = track.animate([{ transform: 'translate3d(0,0,0)' }, { transform: `translate3d(${-w}px,0,0)` }], {
+        duration: (w / 27) * 1000,
+        iterations: Infinity,
+      });
+    };
+    track.style.animation = 'none';
+    (document.fonts ? document.fonts.ready : Promise.resolve()).then(build);
+    let rt;
+    window.addEventListener('resize', () => {
+      clearTimeout(rt);
+      rt = setTimeout(build, 200);
+    });
+  }
+
+  /* ---------- Mosaicos ---------- */
+  function initMosaics() {
+    const tile = (t, sub) => `<a class="tile" href="${t.href}">
+      ${img(t.image, { sizes: '(max-width: 749px) 100vw, 50vw' })}
+      <span class="tile__overlay"><span class="tile__title">${esc(t.title)}</span>${sub && t.text ? `<span class="tile__sub">${esc(t.text)}</span>` : ''}</span>
+    </a>`;
+    $('[data-editorial]').innerHTML = D.editorial.map((t) => tile(t, true)).join('');
+    $('[data-rooms]').innerHTML = D.rooms.map((t) => tile(t, false)).join('');
   }
 
   /* ---------- Favoritos ---------- */
-  let wishlist = store.get('atual:wishlist', []);
+  let wishlist = storage.get('atual:wishlist', []).filter((id) => byId[id]);
 
   function renderWishlist() {
     $$('[data-wish]').forEach((b) => {
+      if (!b.classList.contains('card__wish')) return;
       const on = wishlist.includes(b.dataset.wish);
       b.classList.toggle('is-active', on);
       b.setAttribute('aria-pressed', String(on));
     });
-    const bubble = $('[data-wishlist-count]');
-    bubble.textContent = wishlist.length;
-    bubble.hidden = !wishlist.length;
-    const list = $('[data-wishlist-items]');
-    list.innerHTML = wishlist.length
-      ? wishlist
-          .map((id) => productById[id])
-          .filter(Boolean)
-          .map(
-            (p) => `<div class="line">
-              <span class="line__img">${picture(p.image, '', { sizes: '72px' })}</span>
-              <div class="line__info">
-                <p class="line__name">${esc(p.name)}</p>
-                <p class="line__price">${brl(p.price)}</p>
-                <div class="line__row">
-                  <button class="link-btn" type="button" data-add="${p.id}">Adicionar ao carrinho</button>
-                  <button class="link-btn link-btn--muted" type="button" data-wish="${p.id}">Remover</button>
-                </div>
-              </div>
-            </div>`
-          )
-          .join('')
-      : `<div class="empty">${icon('i-heart', 'icon empty__icon')}<p>Você ainda não favoritou nenhum produto.</p></div>`;
+    const count = $('[data-wishlist-count]');
+    count.textContent = wishlist.length;
+    count.hidden = !wishlist.length;
+    $('[data-wishlist]').innerHTML = `
+      <div class="cart__head">
+        <h2 class="cart__title">Favoritos</h2>
+        <span class="cart__count">${wishlist.length ? plural(wishlist.length, 'item', 'itens') : ''}</span>
+        <button class="drawer__close" type="button" aria-label="Fechar favoritos" data-close>${icon('i-close')}</button>
+      </div>
+      <div class="cart__body">
+        ${
+          wishlist.length
+            ? wishlist
+                .map((id) => byId[id])
+                .map(
+                  (p) => `<div class="line">
+                    <a class="line__img" href="${productUrl(p)}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">${img(p.image)}</a>
+                    <div>
+                      <div class="line__top">
+                        <p class="line__name">${esc(p.name)}</p>
+                        <button class="line__remove" type="button" aria-label="Remover ${esc(p.name)} dos favoritos" data-wish="${p.id}">${icon('i-trash')}</button>
+                      </div>
+                      <div class="line__bottom">
+                        <button class="upsell__btn" type="button" data-add="${p.id}">Levar</button>
+                        <span class="line__price">${brl(p.price)} <small>no PIX</small></span>
+                      </div>
+                    </div>
+                  </div>`
+                )
+                .join('')
+            : `<div class="cart-empty">
+                <span class="cart-empty__icon">${icon('i-heart')}</span>
+                <p class="cart-empty__title">Sua lista de favoritos está vazia</p>
+                <button class="btn-checkout" type="button" data-close>Continuar comprando ${icon('i-arrow')}</button>
+              </div>`
+        }
+      </div>`;
   }
 
   function toggleWish(id) {
     const on = wishlist.includes(id);
     wishlist = on ? wishlist.filter((x) => x !== id) : [...wishlist, id];
-    store.set('atual:wishlist', wishlist);
+    storage.set('atual:wishlist', wishlist);
     renderWishlist();
     toast(on ? 'Removido dos favoritos' : 'Adicionado aos favoritos');
   }
 
   /* ---------- Carrinho ---------- */
-  let cart = store.get('atual:cart', []);
+  let cart = storage.get('atual:cart', []).filter((l) => byId[l.id] && l.qty > 0);
 
-  function cartTotals() {
-    const subtotal = cart.reduce((s, l) => s + productById[l.id].price * l.qty, 0);
-    return { subtotal, pix: subtotal * (1 - D.store.pixDiscount), count: cart.reduce((s, l) => s + l.qty, 0) };
+  const totals = () => {
+    const pix = cart.reduce((s, l) => s + byId[l.id].price * l.qty, 0);
+    return { pix, card: cardTotal(pix), count: cart.reduce((s, l) => s + l.qty, 0) };
+  };
+
+  function checkoutMessage() {
+    const t = totals();
+    const lines = cart.map((l) => `• ${l.qty}x ${byId[l.id].name} — ${brl(byId[l.id].price * l.qty)}`);
+    return `Olá! Quero finalizar meu pedido pelo site da Atual:\n${lines.join('\n')}\n\nTotal no PIX: ${brl(t.pix)}\nou ${brl(t.card)} em até ${S.installments}x de ${brl(t.card / S.installments)} sem juros`;
   }
 
   function renderCart() {
-    cart = cart.filter((l) => productById[l.id] && l.qty > 0);
-    store.set('atual:cart', cart);
-    const t = cartTotals();
+    cart = cart.filter((l) => byId[l.id] && l.qty > 0);
+    storage.set('atual:cart', cart);
+    const t = totals();
     const bubble = $('[data-cart-count]');
     bubble.textContent = t.count;
     bubble.hidden = !t.count;
-    $('[data-cart-items]').innerHTML = cart.length
-      ? cart
-          .map((l) => {
-            const p = productById[l.id];
-            return `<div class="line">
-              <span class="line__img">${picture(p.image, '', { sizes: '72px' })}</span>
-              <div class="line__info">
-                <p class="line__name">${esc(p.name)}</p>
-                <p class="line__price">${brl(p.price * l.qty)}</p>
-                <div class="line__row">
-                  <div class="qty" aria-label="Quantidade">
-                    <button type="button" aria-label="Diminuir" data-qty="${p.id}" data-delta="-1">${icon('i-minus', 'icon icon--xs')}</button>
-                    <span>${l.qty}</span>
-                    <button type="button" aria-label="Aumentar" data-qty="${p.id}" data-delta="1">${icon('i-plus', 'icon icon--xs')}</button>
-                  </div>
-                  <button class="link-btn link-btn--muted" type="button" data-remove="${p.id}">Remover</button>
-                </div>
-              </div>
-            </div>`;
-          })
-          .join('')
-      : `<div class="empty">${icon('i-cart', 'icon empty__icon')}<p>Seu carrinho está vazio.</p><a class="btn btn--pill btn--primary" href="#queridinhos" data-close-drawer>Ver produtos</a></div>`;
-    $('[data-cart-foot]').innerHTML = cart.length
-      ? `<div class="cart-foot__row"><span>Subtotal</span><strong>${brl(t.subtotal)}</strong></div>
-         <div class="cart-foot__row cart-foot__row--pix"><span>No PIX (${Math.round(D.store.pixDiscount * 100)}% OFF)</span><strong>${brl(t.pix)}</strong></div>
-         <p class="cart-foot__note">ou em até ${D.store.installments}x de ${brl(t.subtotal / D.store.installments)} sem juros</p>
-         <a class="btn btn--block btn--primary" href="${whatsappUrl(cartMessage())}" target="_blank" rel="noopener">${icon('i-whatsapp', 'icon icon--sm')} Finalizar pelo WhatsApp</a>`
-      : '';
-  }
 
-  function cartMessage() {
-    const lines = cart.map((l) => `• ${l.qty}x ${productById[l.id].name} — ${brl(productById[l.id].price * l.qty)}`);
-    return `Olá! Quero finalizar este pedido no site da Atual Móveis:\n${lines.join('\n')}\nTotal: ${brl(cartTotals().subtotal)}`;
+    const head = `<div class="cart__head">
+        <h2 class="cart__title">Seu Carrinho</h2>
+        <span class="cart__count">${t.count ? plural(t.count, 'item', 'itens') : ''}</span>
+        <button class="drawer__close" type="button" aria-label="Fechar carrinho" data-close>${icon('i-close')}</button>
+      </div>`;
+
+    if (!cart.length) {
+      $('[data-cart]').innerHTML = `${head}<div class="cart__body"><div class="cart-empty">
+          <span class="cart-empty__icon">${icon('i-cart')}</span>
+          <p class="cart-empty__title">O carrinho está vazio</p>
+          <button class="btn-checkout" type="button" data-close>CONTINUAR COMPRANDO ${icon('i-arrow')}</button>
+        </div></div>`;
+      return;
+    }
+
+    const missing = Math.max(0, S.freeShippingMin - t.pix);
+    const pct = Math.min(100, (t.pix / S.freeShippingMin) * 100);
+    const ship = `<div class="ship">
+        ${missing > 0 ? `Faltam <strong>${brl(missing)}</strong> para ganhar frete grátis em Ponte Nova e região*` : '<strong>Você ganhou frete grátis</strong> em Ponte Nova e região!*'}
+        <div class="ship__bar" role="progressbar" aria-label="Progresso para o frete grátis" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><span style="width:${pct}%"></span></div>
+      </div>`;
+
+    const lines = cart
+      .map((l) => {
+        const p = byId[l.id];
+        return `<div class="line">
+          <a class="line__img" href="${productUrl(p)}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">${img(p.image)}</a>
+          <div>
+            <div class="line__top">
+              <p class="line__name">${esc(p.name)}</p>
+              <button class="line__remove" type="button" aria-label="Remover ${esc(p.name)}" data-remove="${p.id}">${icon('i-trash')}</button>
+            </div>
+            <div class="line__bottom">
+              <div class="qty" role="group" aria-label="Quantidade de ${esc(p.name)}">
+                <button type="button" aria-label="Diminuir quantidade" data-qty="${p.id}" data-delta="-1">${icon('i-minus')}</button>
+                <span aria-live="polite">${l.qty}</span>
+                <button type="button" aria-label="Aumentar quantidade" data-qty="${p.id}" data-delta="1">${icon('i-plus')}</button>
+              </div>
+              <span class="line__price">${brl(p.price * l.qty)} <small>no PIX</small></span>
+            </div>
+          </div>
+        </div>`;
+      })
+      .join('');
+
+    const inCart = new Set(cart.map((l) => l.id));
+    const recs = D.sections.queridinhos.filter((id) => !inCart.has(id)).slice(0, 3).map((id) => byId[id]);
+    const upsell = recs.length
+      ? `<div class="upsell">
+          <p class="upsell__title">Complete seu ambiente!</p>
+          <div class="upsell__list">${recs
+            .map(
+              (p) => `<div class="upsell__item">
+                <span class="upsell__img">${img(p.image)}</span>
+                <div><p class="upsell__name">${esc(p.name)}</p><p class="upsell__price">${brl(p.price)} <small>no PIX</small></p></div>
+                <button class="upsell__btn" type="button" data-add="${p.id}" aria-label="Levar ${esc(p.name)}">Levar</button>
+              </div>`
+            )
+            .join('')}</div>
+        </div>`
+      : '';
+
+    $('[data-cart]').innerHTML = `${head}
+      <div class="cart__body">${ship}${lines}${upsell}</div>
+      <div class="cart__foot">
+        <div class="cart__row"><span>Subtotal</span><span>${brl(t.pix)}</span></div>
+        <div class="cart__row"><span>Entrega</span><span>A combinar</span></div>
+        <div class="cart__total"><span>Total no PIX</span><strong>${brl(t.pix)}</strong></div>
+        <p class="cart__installments">ou <strong>${brl(t.card)}</strong> em até <strong>${S.installments}x de ${brl(t.card / S.installments)}</strong> sem juros</p>
+        <a class="btn-checkout" href="${wa(checkoutMessage())}" target="_blank" rel="noopener">${icon('i-whatsapp')} Finalizar pelo WhatsApp</a>
+        <button class="cart__continue" type="button" data-close>Continuar comprando</button>
+      </div>`;
   }
 
   function addToCart(id) {
-    const line = cart.find((l) => l.id === id);
-    if (line) line.qty += 1;
+    const l = cart.find((x) => x.id === id);
+    if (l) l.qty += 1;
     else cart.push({ id, qty: 1 });
     renderCart();
     openDrawer('cart-drawer');
@@ -523,111 +813,324 @@
   function initCommerce() {
     document.addEventListener('click', (e) => {
       const wish = e.target.closest('[data-wish]');
-      if (wish) return toggleWish(wish.dataset.wish);
+      if (wish) {
+        e.preventDefault();
+        toggleWish(wish.dataset.wish);
+        return;
+      }
       const add = e.target.closest('[data-add]');
-      if (add) return addToCart(add.dataset.add);
+      if (add) {
+        e.preventDefault();
+        addToCart(add.dataset.add);
+        return;
+      }
       const qty = e.target.closest('[data-qty]');
       if (qty) {
         const l = cart.find((x) => x.id === qty.dataset.qty);
         if (l) l.qty += +qty.dataset.delta;
-        return renderCart();
+        renderCart();
+        const again = $(`[data-qty="${qty.dataset.qty}"][data-delta="${qty.dataset.delta}"]`);
+        (again || $('[data-cart] .drawer__close'))?.focus();
+        return;
       }
       const rm = e.target.closest('[data-remove]');
       if (rm) {
         cart = cart.filter((x) => x.id !== rm.dataset.remove);
         renderCart();
+        $('[data-cart] .drawer__close')?.focus();
+        return;
       }
+      const prod = e.target.closest('[data-product]');
+      if (prod) rememberViewed(prod.dataset.product);
     });
     renderWishlist();
     renderCart();
   }
 
   /* ---------- Busca ---------- */
-  const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  let viewed = storage.get('atual:viewed', []).filter((id) => byId[id]);
 
-  function closeSearch() {
-    const box = $('[data-search-results]');
-    if (box) box.hidden = true;
+  function rememberViewed(id) {
+    viewed = [id, ...viewed.filter((x) => x !== id)].slice(0, 6);
+    storage.set('atual:viewed', viewed);
+  }
+
+  // Termos que levam a grupos de categorias.
+  const SYNONYMS = {
+    'sala de estar': ['Sofás', 'Poltronas', 'Mesas de Centro', 'Mesas Laterais', 'Smart TVs'],
+    sala: ['Sofás', 'Poltronas', 'Mesas de Centro', 'Mesas Laterais', 'Cadeiras'],
+    quarto: ['Camas', 'Colchões', 'Criados-mudos', 'Cômodas'],
+    cozinha: ['Geladeiras', 'Fogões', 'Eletroportáteis'],
+    eletro: ['Geladeiras', 'Fogões', 'Lavadoras', 'Smart TVs', 'Eletroportáteis'],
+    tv: ['Smart TVs'],
+    sofa: ['Sofás'],
+    colchao: ['Colchões'],
+    cama: ['Camas', 'Colchões'],
+    mesa: ['Mesas de Centro', 'Mesas Laterais', 'Cadeiras'],
+    geladeira: ['Geladeiras'],
+    refrigerador: ['Geladeiras'],
+    fogao: ['Fogões'],
+    lavadora: ['Lavadoras'],
+    'maquina de lavar': ['Lavadoras'],
+    cafeteira: ['Eletroportáteis'],
+  };
+
+  const vocab = Array.from(new Set(D.products.flatMap((p) => [p.category, ...norm(p.name).split(/[^a-z0-9]+/)]).filter((w) => w && w.length > 3)));
+
+  function levenshtein(a, b) {
+    const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      let prev = dp[0];
+      dp[0] = i;
+      for (let j = 1; j <= b.length; j++) {
+        const tmp = dp[j];
+        dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+        prev = tmp;
+      }
+    }
+    return dp[b.length];
+  }
+
+  function searchProducts(q) {
+    const nq = norm(q);
+    if (nq === 'mais vendidos') return D.sections.queridinhos.map((id) => byId[id]);
+    const singular = nq.replace(/(oes|aes)$/, 'ao').replace(/s$/, '');
+    const cats = new Set();
+    Object.entries(SYNONYMS).forEach(([k, v]) => {
+      if (nq === k || singular === k || (nq.length >= 3 && k.startsWith(nq))) v.forEach((c) => cats.add(c));
+    });
+    const terms = nq.split(/\s+/).filter(Boolean);
+    return D.products.filter((p) => {
+      const hay = norm(`${p.name} ${p.category}`);
+      return cats.has(p.category) || terms.every((t) => hay.includes(t) || hay.includes(t.replace(/s$/, '')));
+    });
+  }
+
+  function highlight(text, q) {
+    const n = norm(text);
+    const i = n.indexOf(norm(q));
+    if (i < 0) return esc(text);
+    return `${esc(text.slice(0, i))}<mark>${esc(text.slice(i, i + q.length))}</mark>${esc(text.slice(i + q.length))}`;
   }
 
   function initSearch() {
     const input = $('[data-search-input]');
-    const box = $('[data-search-results]');
+    const body = $('[data-search-body]');
+    const clear = $('[data-search-clear]');
+    const all = $('[data-search-all]');
     const form = $('[data-search-form]');
+    let showAll = false;
+    let debounce;
+    let active = -1;
+
+    const options = () => $$('[role="option"]', body);
+    const setActive = (i) => {
+      const opts = options();
+      opts.forEach((o) => o.setAttribute('aria-selected', 'false'));
+      active = opts.length ? (i + opts.length) % opts.length : -1;
+      if (active >= 0) {
+        opts[active].setAttribute('aria-selected', 'true');
+        opts[active].scrollIntoView({ block: 'nearest' });
+        input.setAttribute('aria-activedescendant', opts[active].id);
+      } else input.removeAttribute('aria-activedescendant');
+    };
+
+    const resultItem = (p, i) => `<a class="sresult" id="sr-${i}" role="option" aria-selected="false" href="${productUrl(p)}" target="_blank" rel="noopener" data-product="${p.id}">
+        <span class="sresult__img">${img(p.image)}</span>
+        <span>
+          <span class="sresult__cat">${esc(p.category)}</span>
+          <span class="sresult__name">${esc(p.name)}</span>
+          <span class="sresult__price">${p.compareAt ? `<s>${brl(p.compareAt)}</s> — ` : ''}<strong>${brl(p.price)}</strong> <small>no PIX</small></span>
+        </span>
+      </a>`;
+
+    const defaults = () => {
+      const recent = viewed.map((id) => byId[id]).filter(Boolean);
+      body.innerHTML = `
+        <div class="search__section">
+          <p class="search__label">Categorias</p>
+          <div class="chips">${D.searchCategories.map((c) => `<button class="chip" type="button" data-query="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+        </div>
+        <div class="search__section">
+          <p class="search__label">Buscas populares</p>
+          <ul class="qlist" role="listbox" aria-label="Buscas populares">${D.popularSearches
+            .map((q, i) => `<li><a href="#" id="sq-${i}" role="option" aria-selected="false" data-query="${esc(q)}">${icon('i-search')}${esc(q)}</a></li>`)
+            .join('')}</ul>
+        </div>
+        ${
+          recent.length
+            ? `<div class="search__section"><p class="search__label">Vistos por último</p><div class="sresults" role="listbox" aria-label="Vistos por último">${recent
+                .map((p, i) => resultItem(p, `v${i}`))
+                .join('')}</div></div>`
+            : ''
+        }`;
+      all.hidden = true;
+      input.setAttribute('aria-expanded', 'false');
+      active = -1;
+    };
+
     const run = () => {
-      const q = norm(input.value.trim());
-      if (q.length < 2) return closeSearch();
-      const hits = D.products.filter((p) => norm(p.name).includes(q)).slice(0, 6);
-      const cats = D.categories.filter((c) => norm(c.name).includes(q)).slice(0, 4);
-      box.innerHTML = `<div class="page-width search-results__inner">
-        ${cats.length ? `<div class="search-results__cats">${cats.map((c) => `<a href="${c.href}">${esc(c.name)}</a>`).join('')}</div>` : ''}
+      const q = input.value.trim();
+      clear.hidden = !q;
+      if (q.length < 2) return defaults();
+      const hits = searchProducts(q);
+      const nq = norm(q);
+      const sugg = Array.from(
+        new Set([...D.categories.map((c) => c.name), ...D.popularSearches, ...D.products.map((p) => p.category)].filter((s) => norm(s).includes(nq)))
+      ).slice(0, 4);
+      let didYouMean = '';
+      if (!hits.length && nq.length >= 3) {
+        const best = vocab.map((w) => [w, levenshtein(nq, norm(w))]).sort((a, b) => a[1] - b[1])[0];
+        if (best && best[1] <= 2) didYouMean = best[0];
+      }
+      const shown = showAll ? hits : hits.slice(0, 6);
+      body.innerHTML = `
+        ${didYouMean ? `<p class="did-you-mean">Você quis dizer: <button type="button" data-query="${esc(didYouMean)}">${esc(didYouMean)}</button>?</p>` : ''}
+        ${
+          sugg.length
+            ? `<div class="search__section"><p class="search__label">Sugestões</p><ul class="qlist" role="listbox" aria-label="Sugestões">${sugg
+                .map((s, i) => `<li><a href="#" id="ss-${i}" role="option" aria-selected="false" data-query="${esc(s)}">${icon('i-search')}<span>${highlight(s, q)}</span></a></li>`)
+                .join('')}</ul></div>`
+            : ''
+        }
         ${
           hits.length
-            ? `<ul class="search-results__list">${hits
-                .map((p) => `<li><a href="#" data-product-link="${p.id}">${picture(p.image, '', { sizes: '56px' })}<span>${esc(p.name)}<strong>${brl(p.price)}</strong></span></a></li>`)
-                .join('')}</ul>`
-            : `<p class="search-results__empty">Nenhum produto encontrado para “${esc(input.value.trim())}”.</p>`
-        }
-      </div>`;
-      box.hidden = false;
+            ? `<div class="search__section"><p class="search__label">Produtos</p><div class="sresults" role="listbox" aria-label="Produtos">${shown.map(resultItem).join('')}</div></div>`
+            : `<div class="search__empty"><strong>Nenhum resultado para “${esc(q)}”</strong><p>Tente outras palavras ou fale com um vendedor no WhatsApp.</p></div>`
+        }`;
+      all.hidden = !(hits.length > shown.length);
+      input.setAttribute('aria-expanded', 'true');
+      active = -1;
     };
-    input.addEventListener('input', run);
-    input.addEventListener('focus', run);
-    form.addEventListener('submit', (e) => { e.preventDefault(); run(); });
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('[data-search-form]') && !e.target.closest('[data-search-results]')) closeSearch();
+
+    input.addEventListener('input', () => {
+      showAll = false;
+      clearTimeout(debounce);
+      debounce = setTimeout(run, 50);
     });
-  }
-
-  /* ---------- Rodapé, cookies, newsletter ---------- */
-  function initFooter() {
-    const s = D.store;
-    $$('[data-whatsapp-link]').forEach((a) => (a.href = whatsappUrl()));
-    const items = [
-      s.whatsapp && `<li><a href="${whatsappUrl()}" target="_blank" rel="noopener">WhatsApp: ${esc(s.phone)}</a></li>`,
-      s.phone && `<li><a href="tel:+55${s.phone.replace(/\D/g, '')}">Telefone: ${esc(s.phone)}</a></li>`,
-      s.email && `<li><a href="mailto:${esc(s.email)}">E-mail: ${esc(s.email)}</a></li>`,
-      s.hours && `<li>${esc(s.hours)}</li>`,
-      `<li><a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.address)}" target="_blank" rel="noopener">${esc(s.address)}</a></li>`,
-    ].filter(Boolean);
-    $('[data-contact-list]').innerHTML = items.join('');
-    $('[data-legal]').innerHTML = `<p>© ${new Date().getFullYear()} ${esc(s.name.toUpperCase())}. Todos os direitos reservados.</p>
-      <p>${esc(s.legalName)}${s.cnpj ? ` · CNPJ: ${esc(s.cnpj)}` : ''}<br>${esc(s.address)}</p>`;
-
-    // Colunas do rodapé viram acordeão no celular.
-    const syncCols = () => $$('[data-footer-col]').forEach((d) => (d.open = !mqMobile.matches));
-    syncCols();
-    mqMobile.addEventListener('change', syncCols);
-
-    $('[data-newsletter]').addEventListener('submit', (e) => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActive(active + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive(active - 1);
+      } else if (e.key === 'Enter' && active >= 0) {
+        e.preventDefault();
+        options()[active].click();
+      }
+    });
+    form.addEventListener('submit', (e) => {
       e.preventDefault();
-      const msg = $('[data-newsletter-msg]');
-      msg.textContent = 'Pronto! Você vai receber nossas novidades e ofertas.';
-      e.target.reset();
+      run();
+    });
+    clear.addEventListener('click', () => {
+      input.value = '';
+      run();
+      input.focus();
+    });
+    all.addEventListener('click', (e) => {
+      e.preventDefault();
+      showAll = true;
+      run();
+    });
+    body.addEventListener('click', (e) => {
+      const q = e.target.closest('[data-query]');
+      if (!q) return;
+      e.preventDefault();
+      input.value = q.dataset.query;
+      showAll = false;
+      run();
+      input.focus();
+    });
+    defaults();
+
+    // Atalhos: ?busca=termo ou ?open-search=1 abrem a busca
+    const params = new URLSearchParams(location.search);
+    if (params.has('busca') || params.get('open-search') === '1') {
+      input.value = params.get('busca') || '';
+      openDrawer('search-drawer');
+      run();
+    }
+    onOpen['search-drawer'] = () => (input.value.trim() ? run() : defaults());
+  }
+
+  /* ---------- Rodapé ---------- */
+  function initFooter() {
+    $$('[data-whatsapp]').forEach((a) => (a.href = wa(WA_TEXT[a.dataset.whatsapp] || WA_TEXT.help)));
+    $$('[data-maps]').forEach((a) => (a.href = mapsUrl));
+
+    const social = [
+      S.instagram && `<li><a href="${S.instagram}" target="_blank" rel="noopener" aria-label="Instagram">${icon('i-instagram')}</a></li>`,
+      S.facebook && `<li><a href="${S.facebook}" target="_blank" rel="noopener" aria-label="Facebook">${icon('i-facebook')}</a></li>`,
+      S.whatsapp && `<li><a href="${wa(WA_TEXT.help)}" target="_blank" rel="noopener" aria-label="WhatsApp">${icon('i-whatsapp')}</a></li>`,
+    ]
+      .filter(Boolean)
+      .join('');
+    $$('[data-socials]').forEach((ul) => (ul.innerHTML = social));
+
+    const tel = S.phone.replace(/\D/g, '');
+    $('[data-contact]').innerHTML = [
+      S.whatsapp && `<p><a href="${wa(WA_TEXT.help)}" target="_blank" rel="noopener">WhatsApp: ${esc(S.phone)}</a></p>`,
+      S.phone && `<p><a href="tel:+55${tel}">Telefone: ${esc(S.phone)}</a></p>`,
+      S.email && `<p><a href="mailto:${esc(S.email)}">E-mail: ${esc(S.email)}</a></p>`,
+      S.hours && `<p>${esc(S.hours)}</p>`,
+      `<p><a href="${mapsUrl}" target="_blank" rel="noopener">${esc(S.address)}</a></p>`,
+    ]
+      .filter(Boolean)
+      .join('');
+
+    $('[data-legal]').innerHTML = `<div>
+        <p>© ${new Date().getFullYear()} ${esc(S.name.toUpperCase())}. Todos os direitos reservados.</p>
+        <p>${esc(S.legalName)}${S.cnpj ? `. CNPJ: ${esc(S.cnpj)}` : ''}<br>${esc(S.address)}</p>
+      </div>
+      <p>*Consulte condições de entrega e frete grátis com a loja.</p>`;
+
+    // No celular as colunas viram acordeão (Atendimento aberto); no desktop ficam sempre abertas.
+    const cols = $$('[data-footer-col]');
+    const sync = () => cols.forEach((d) => (d.open = !mqMobile.matches || d.hasAttribute('data-open-mobile')));
+    sync();
+    mqMobile.addEventListener('change', sync);
+    cols.forEach((d) =>
+      $('summary', d).addEventListener('click', (e) => {
+        if (!mqMobile.matches) e.preventDefault();
+      })
+    );
+
+    const form = $('[data-newsletter]');
+    const msg = $('[data-newsletter-msg]');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const email = form.email.value.trim();
+      const ok = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
+      msg.className = `newsletter__msg ${ok ? 'is-ok' : 'is-error'}`;
+      msg.textContent = ok ? 'Pronto! Você vai receber nossas novidades e ofertas.' : 'Digite um e-mail válido.';
+      if (ok) form.reset();
     });
   }
 
+  /* ---------- Cookies ---------- */
   function initCookie() {
     const el = $('[data-cookie]');
-    if (store.get('atual:cookies', null)) return;
-    el.hidden = false;
-    const done = (v) => {
-      store.set('atual:cookies', v);
+    if (storage.get('atual:cookies', null)) return;
+    setTimeout(() => (el.hidden = false), 1200);
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-cookie-choice]');
+      if (!b) return;
+      storage.set('atual:cookies', b.dataset.cookieChoice);
       el.hidden = true;
-    };
-    $('[data-cookie-accept]').addEventListener('click', () => done('accepted'));
-    $('[data-cookie-decline]').addEventListener('click', () => done('declined'));
+    });
   }
 
   initAnnouncement();
   initHeader();
+  initMenu();
+  initDrawers();
   initHero();
   initCategories();
-  initProducts();
-  initCarousels();
+  initShelves();
   initMarquee();
-  initEditorial();
-  initDrawers();
+  initMosaics();
   initCommerce();
   initSearch();
   initFooter();
