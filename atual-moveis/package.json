@@ -1,0 +1,14 @@
+{
+  "name": "atual-moveis-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vitrine da Atual Móveis e Eletro (Ponte Nova - MG)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "PORT=8080 node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
