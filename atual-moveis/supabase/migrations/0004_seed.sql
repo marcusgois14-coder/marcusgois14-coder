@@ -96,7 +96,7 @@ from (values
 on conflict (slug) do nothing;
 
 -- Modelos de produto (copiados para o catálogo de cada loja)
-create temp table seed_products (
+create temp table if not exists seed_products (
   sku text primary key, cat text, name text, price numeric, compare numeric,
   is_new boolean, free_shipping boolean, fast boolean, promo boolean,
   images text[], variants jsonb, brand text, warranty text,
@@ -272,5 +272,3 @@ insert into public.announcements (store_id, text, cta_label, cta_url, sort_order
 insert into public.coupons (store_id, code, description, type, value, min_order, active) values
   (null, 'BEMVINDO5', 'Exemplo: 5% de desconto na primeira compra', 'percent', 5, 300, false)
 on conflict do nothing;
-
-drop table seed_products;
