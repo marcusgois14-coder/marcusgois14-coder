@@ -19,6 +19,12 @@ const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SE
 
 const UA = 'AtualMoveis/1.0 (vitrine da rede Atual Moveis; calculo de raio de entrega)';
 const onlyDigits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
+const UF: Record<string, string> = {
+  AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal',
+  ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais',
+  PA: 'Pará', PB: 'Paraíba', PR: 'Paraná', PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte',
+  RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins',
+};
 const clean = (s: unknown, max = 120) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
 async function fetchJson(url: string, timeoutMs = 7000) {
@@ -104,7 +110,10 @@ Deno.serve(async (req) => {
       const key = `addr:${[street, number, city, state].join('|').toLowerCase()}`;
       const hit = await cached(key);
       if (hit?.lat) return json({ ...hit, precision: number ? 'address' : 'street', source: 'cache', address });
-      const r = await nominatim({ street: number ? `${number} ${street}` : street, city, state, country: 'Brasil' });
+      const stateName = UF[state] ?? state;
+      const r =
+        (await nominatim({ street: number ? `${number} ${street}` : street, city, state: stateName, country: 'Brasil' })) ??
+        (await nominatim({ q: [street, number, city, stateName, 'Brasil'].filter(Boolean).join(', ') }));
       if (r) {
         await store(key, r);
         return json({ ...r, precision: number ? 'address' : 'street', source: 'osm', address });
@@ -118,7 +127,9 @@ Deno.serve(async (req) => {
       const key = `city:${[city, state].join('|').toLowerCase()}`;
       const hit = await cached(key);
       if (hit?.lat) return json({ ...hit, precision: 'city', source: 'cache', address });
-      const r = await nominatim({ city, state, country: 'Brasil' });
+      const r =
+        (await nominatim({ city, state: UF[state] ?? state, country: 'Brasil' })) ??
+        (await nominatim({ q: [city, UF[state] ?? state, 'Brasil'].filter(Boolean).join(', ') }));
       if (r) {
         await store(key, r);
         return json({ ...r, precision: 'city', source: 'osm', address });
