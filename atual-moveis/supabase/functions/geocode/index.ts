@@ -27,23 +27,32 @@ const UF: Record<string, string> = {
 };
 const clean = (s: unknown, max = 120) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
+// null = sem resposta útil; undefined = serviço fora do ar (falha de rede, tempo esgotado ou bloqueio)
 async function fetchJson(url: string, timeoutMs = 7000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: ctrl.signal });
+    if (r.status === 403 || r.status === 429 || r.status >= 500) return undefined;
     if (!r.ok) return null;
     return await r.json();
   } catch {
-    return null;
+    return undefined;
   } finally {
     clearTimeout(t);
   }
 }
 
+// OpenStreetMap: tentativa curta; se o serviço não responder, as demais buscas desta chamada são puladas.
+let osmDown = false;
 async function nominatim(params: Record<string, string>) {
+  if (osmDown) return null;
   const qs = new URLSearchParams({ format: 'jsonv2', limit: '1', countrycodes: 'br', addressdetails: '0', ...params });
-  const d = await fetchJson(`https://nominatim.openstreetmap.org/search?${qs}`);
+  const d = await fetchJson(`https://nominatim.openstreetmap.org/search?${qs}`, 3000);
+  if (d === undefined) {
+    osmDown = true;
+    return null;
+  }
   if (Array.isArray(d) && d[0]) return { lat: Number(d[0].lat), lng: Number(d[0].lon), display_name: d[0].display_name as string };
   return null;
 }
@@ -60,6 +69,7 @@ async function store(key: string, v: { lat: number; lng: number; display_name?: 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'Método não permitido' }, 405);
+  osmDown = false;
   try {
     const body = await req.json().catch(() => ({}));
     const cep = onlyDigits(body.cep);
