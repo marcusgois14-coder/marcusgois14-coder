@@ -829,7 +829,7 @@ async function scopedTab(pane, ctx, alive, tab) {
           : thumb(b.image_url, 'sc-media__square')}
       </div>
       <div class="sc-info">
-        <div class="sc-badges">${badge(st.label, st.tone)}${b.store_id ? '' : netBadge()}</div>
+        <div class="sc-badges"><span class="sc-pos" title="Posição na ordem">${i + 1}º</span>${badge(st.label, st.tone)}${b.store_id ? '' : netBadge()}</div>
         ${b.kicker ? html`<div class="sc-kicker">${b.kicker}</div>` : ''}
         <div class="sc-title">${b.title}</div>
         ${b.text ? html`<div class="sc-text">${b.text}</div>` : ''}
@@ -860,7 +860,7 @@ async function scopedTab(pane, ctx, alive, tab) {
       <div class="sc-info">
         <div class="sc-bar"><span>${a.text}</span>${a.cta_label && a.cta_url ? html`<span class="sc-bar__cta">${a.cta_label}</span>` : ''}</div>
         <div class="sc-meta">
-          ${badge(st.label, st.tone)}${a.store_id ? '' : netBadge()}
+          <span class="sc-pos" title="Posição na ordem">${i + 1}º</span>${badge(st.label, st.tone)}${a.store_id ? '' : netBadge()}
           ${a.cta_url ? html`<span title="Link do botão">${svg('link', 'icon-sm')}<span class="mono ellipsis">${a.cta_url}</span></span>` : html`<span class="faint">Sem botão</span>`}
           <span>${svg('clock', 'icon-sm')}${scheduleText(a)}</span>
         </div>
@@ -1481,7 +1481,8 @@ const CSS = `
 .sc-media__square { width: 80px; aspect-ratio: 1; height: auto; }
 .sc-noimg { display: flex; align-items: center; justify-content: center; color: var(--faint); background: #fff; border: 1px dashed var(--line-strong); }
 .sc-info { grid-area: info; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.sc-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.sc-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sc-pos { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 22px; padding: 0 6px; border-radius: 6px; background: #f0f0f0; color: var(--ink); font-size: 11.5px; font-weight: 700; }
 .sc-kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--accent); }
 .sc-title { font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
 .sc-text { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

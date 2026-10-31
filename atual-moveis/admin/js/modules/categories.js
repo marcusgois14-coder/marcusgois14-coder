@@ -498,6 +498,7 @@ const CSS = `
 .ct-cat--child { padding-left: 22px; }
 .ct-branch { color: var(--faint); font-size: 16px; margin-right: -4px; }
 .ct-cat__txt { display: flex; flex-direction: column; min-width: 0; }
+.ct-cat__txt .mono { white-space: nowrap; }
 .ct-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-weight: 700; color: var(--ink); }
 .ct-desc { max-width: 420px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .ct-noimg { display: inline-flex; align-items: center; justify-content: center; color: var(--faint); border: 1px dashed var(--line-strong); background: #fff; flex: none; }
