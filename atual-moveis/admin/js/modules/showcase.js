@@ -152,6 +152,18 @@ async function saveOrder(table, list, ids, match = (b, r) => b.eq('id', r.id), k
   return true;
 }
 
+// Tira a marca de erro de um campo assim que ele é editado
+function clearErrorsOnInput(form) {
+  const clear = (e) => {
+    const name = e.target.name;
+    if (!name) return;
+    e.target.removeAttribute('aria-invalid');
+    $$(`.error[data-for="${name}"]`, form).forEach((n) => n.remove());
+  };
+  form.addEventListener('input', clear);
+  form.addEventListener('change', clear);
+}
+
 // Ordem atual de uma lista na tela, já com a troca pedida pelas setas
 function swapIds(listEl, id, dir) {
   const ids = $$('.sc-row[data-id]', listEl).map((n) => n.dataset.id);
@@ -534,6 +546,7 @@ function openCollectionEditor(ctx, { item = null, storeId, order = 1, onSaved })
       <button class="btn btn--primary" type="button" data-save>${isNew ? 'Criar prateleira' : 'Salvar'}</button>`,
     onMount(el, close) {
       const form = $('[data-form]', el);
+      clearErrorsOnInput(form);
       const keyEl = form.elements.key;
       const hint = $('[data-key-hint]', el);
       const drawHint = () => {
@@ -1127,6 +1140,7 @@ function openBannerEditor(ctx, { item = null, kind, storeId = null, order = 1, o
       <button class="btn btn--primary" type="button" data-save>${isNew ? 'Criar' : 'Salvar'}</button>`,
     onMount(el, close) {
       const form = $('[data-form]', el);
+      clearErrorsOnInput(form);
       fillDatalist(el, scopeStore);
       const ups = {};
       for (const name of isHero ? ['image_url', 'image_mobile_url'] : ['image_url']) {
@@ -1155,6 +1169,7 @@ function openBannerEditor(ctx, { item = null, kind, storeId = null, order = 1, o
             const u = urls[0] || '';
             if (u && !u.startsWith('data:') && u !== orig[name]) uploads.add(u);
             form.elements[name].value = u.startsWith('data:') ? '' : u;
+            if (form.elements[name].value) $$(`.error[data-for="${name}"]`, form).forEach((n) => n.remove());
           },
         });
       }
@@ -1308,6 +1323,7 @@ function openAnnouncementEditor(ctx, { item = null, storeId = null, order = 1, o
       <button class="btn btn--primary" type="button" data-save>${isNew ? 'Criar aviso' : 'Salvar'}</button>`,
     onMount(el, close) {
       const form = $('[data-form]', el);
+      clearErrorsOnInput(form);
       fillDatalist(el, scopeStore);
       const preview = () => {
         const t = form.elements.text.value.trim();

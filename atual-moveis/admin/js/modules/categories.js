@@ -265,6 +265,13 @@ export default {
           <button class="btn btn--primary" type="button" data-save>${isNew ? 'Criar categoria' : 'Salvar'}</button>`,
         onMount(el, close) {
           const form = $('[data-form]', el);
+          const clear = (e) => {
+            if (!e.target.name) return;
+            e.target.removeAttribute('aria-invalid');
+            $$(`.error[data-for="${e.target.name}"]`, form).forEach((n) => n.remove());
+          };
+          form.addEventListener('input', clear);
+          form.addEventListener('change', clear);
           const slugEl = form.elements.slug;
           const hint = $('[data-slug-hint]', el);
           const drawHint = () => {
