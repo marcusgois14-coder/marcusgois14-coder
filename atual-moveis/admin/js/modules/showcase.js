@@ -556,6 +556,7 @@ function openCollectionEditor(ctx, { item = null, storeId, order = 1, onSaved })
       form.elements.title.addEventListener('input', () => {
         if (!keyTouched) {
           keyEl.value = slugify(form.elements.title.value).slice(0, 60).replace(/-+$/, '');
+          keyEl.dispatchEvent(new Event('change', { bubbles: true })); // limpa o erro do campo
           drawHint();
         }
       });
@@ -1114,7 +1115,7 @@ function openBannerEditor(ctx, { item = null, kind, storeId = null, order = 1, o
         <datalist id="sc-link-list"></datalist>
         <span class="hint">Ex.: #ofertas (prateleira), ?categoria=sofas ou um endereço completo (https://…).</span>
       </div>
-      <div class="field ${isHero ? 'col-8' : 'col-6'}">
+      <div class="field ${isHero ? 'col-8' : 'col-12'}">
         <span class="label" id="b-img-l">${isHero ? 'Imagem desktop *' : 'Imagem *'}</span>
         <div class="sc-up ${isHero ? 'sc-up--wide' : 'sc-up--square'}" data-up="image_url" role="group" aria-labelledby="b-img-l"></div>
         <input type="hidden" name="image_url">
@@ -1175,7 +1176,12 @@ function openBannerEditor(ctx, { item = null, kind, storeId = null, order = 1, o
       }
       if (!isHero) {
         form.elements.kind.addEventListener('change', () => {
-          $('[data-size-hint]', el).textContent = sizeHint(form.elements.kind.value);
+          const k = form.elements.kind.value;
+          $('[data-size-hint]', el).textContent = sizeHint(k);
+          const g = GROUPS[k];
+          const t = isNew ? `${g.new}${scopeStore ? '' : ' da rede'}` : `Editar ${g.one}${scopeStore ? '' : ' da rede'}`;
+          $('.modal__title', el).textContent = t;
+          el.setAttribute('aria-label', t);
         });
       }
 

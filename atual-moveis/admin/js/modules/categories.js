@@ -65,6 +65,7 @@ export default {
     let rows = [];
     let filter = 'all';
     let term = '';
+    let seq = 0; // a carga mais recente vence
 
     ctx.setActions(html`<button class="btn btn--primary" type="button" data-cat-new aria-label="Nova categoria">${icon('plus')}<span class="ct-hide-sm">Nova categoria</span></button>`);
     $('[data-cat-new]')?.addEventListener('click', () => openEditor(null));
@@ -87,6 +88,7 @@ export default {
 
     /* ----- Dados ----- */
     const load = async (spinner = false) => {
+      const my = ++seq;
       if (spinner) render(listEl, loading());
       try {
         let qb = sb
@@ -97,9 +99,11 @@ export default {
           .order('name');
         if (storeId) qb = qb.eq('here.store_id', storeId);
         const data = await q(qb);
+        if (my !== seq || !listEl.isConnected) return;
         rows = data.map((c) => ({ ...c, total: countOf(c.total), live: countOf(c.live), here: storeId ? countOf(c.here) : null }));
         draw();
       } catch (e) {
+        if (my !== seq || !listEl.isConnected) return;
         if (spinner || !rows.length) {
           render(
             listEl,
@@ -281,6 +285,7 @@ export default {
           form.elements.name.addEventListener('input', () => {
             if (slugTouched) return;
             slugEl.value = slugify(form.elements.name.value).slice(0, 60).replace(/-+$/, '');
+            slugEl.dispatchEvent(new Event('change', { bubbles: true })); // limpa o erro do campo
             drawHint();
           });
           slugEl.addEventListener('input', () => {
@@ -330,6 +335,14 @@ export default {
             else if (!SLUG_RE.test(d.slug)) errors.slug = 'Use letras minúsculas, números e hífens (ex.: mesas-de-centro).';
             if (d.sort_order === null || !Number.isInteger(d.sort_order) || d.sort_order < 0 || d.sort_order > 100000) errors.sort_order = 'Use um número inteiro de 0 em diante.';
             if (!showErrors(form, errors)) return;
+            if (isNew || d.slug !== item.slug) {
+              try {
+                const dup = await q(sb.from('categories').select('id').eq('slug', d.slug).limit(1));
+                if (dup.length) return showErrors(form, { slug: 'Já existe uma categoria com este endereço.' });
+              } catch {
+                /* o banco confere de novo ao salvar */
+              }
+            }
             const payload = {
               name: d.name,
               slug: d.slug,
@@ -449,21 +462,26 @@ export default {
       if (!c) return;
       const fieldName = inp.dataset.toggle;
       const value = inp.checked;
+      const id = c.id;
+      seq += 1; // descarta cargas em andamento, que trariam o valor antigo
       inp.disabled = true;
       try {
-        await q(sb.from('categories').update({ [fieldName]: value }).eq('id', c.id));
-        c[fieldName] = value;
+        await q(sb.from('categories').update({ [fieldName]: value }).eq('id', id));
+        rows.forEach((r) => r.id === id && (r[fieldName] = value));
         toast(
           fieldName === 'active' ? (value ? `“${c.name}” ativada.` : `“${c.name}” desativada.`) : value ? `“${c.name}” na faixa de categorias.` : `“${c.name}” fora da faixa de categorias.`,
           'success',
           2200
         );
+        if (!listEl.isConnected) return;
         draw();
-        $(`tr[data-id="${c.id}"] [data-toggle="${fieldName}"]`, view)?.focus();
+        $(`tr[data-id="${id}"] [data-toggle="${fieldName}"]`, view)?.focus();
+        load();
       } catch (err) {
         inp.checked = !value;
         inp.disabled = false;
         toastError(err);
+        load();
       }
     });
 
