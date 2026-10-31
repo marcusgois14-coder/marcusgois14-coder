@@ -28,7 +28,8 @@ const CSS = `
 .netcfg-logo__tile { position: relative; display: flex; align-items: center; justify-content: center; height: 124px; padding: 26px 18px 24px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; }
 .netcfg-logo__tile.is-dark { border-color: #141414; background: #141414; }
 .netcfg-logo__tile.is-brand { border-color: transparent; background: var(--netcfg-p, #e01b26); }
-.netcfg-logo__tile.is-brand span { color: rgba(255, 255, 255, 0.85); }
+.netcfg-logo__tile.is-brand span { color: #fff; }
+.netcfg [data-wa-hint] a { text-decoration: underline; }
 .netcfg-logo__tile img { max-width: 100%; max-height: 50px; width: auto; height: auto; object-fit: contain; }
 .netcfg-logo__tile span { position: absolute; left: 8px; bottom: 6px; font-size: 10.5px; font-weight: 600; color: var(--muted); }
 .netcfg-logo__tile.is-dark span { color: #9a9a9a; }
@@ -87,6 +88,7 @@ const CSS = `
 .netcfg-chips span { padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: #fff; font-size: 12.5px; font-weight: 600; }
 
 .netcfg__bar { position: sticky; bottom: 0; z-index: 15; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 4px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(8px); box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.06); }
+body:has(.netcfg__bar) .toasts { bottom: 92px; }
 .netcfg__status { display: flex; align-items: center; gap: 8px; margin-right: auto; font-size: 12.5px; color: var(--muted); }
 .netcfg__status.is-dirty { color: var(--warning); font-weight: 700; }
 .netcfg__status.is-dirty::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
@@ -104,6 +106,7 @@ const CSS = `
   .netcfg__bar { padding: 10px 12px; }
   .netcfg__bar .btn { flex: 1; }
   .netcfg__status { flex-basis: 100%; }
+  body:has(.netcfg__bar) .toasts { bottom: 116px; }
   .netcfg-benefit__head { flex-wrap: wrap; }
   .netcfg-benefit .select { flex: 1 1 100%; margin-left: 0; }
 }

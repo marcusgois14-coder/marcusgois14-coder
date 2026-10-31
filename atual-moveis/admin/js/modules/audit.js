@@ -68,9 +68,10 @@ const CSS = `
 .audit-kv dt { font-weight: 600; color: var(--ink); background: var(--surface-2); }
 .audit-kv dt:last-of-type, .audit-kv dd:last-of-type { border-bottom: 0; }
 .audit-val { overflow-wrap: anywhere; white-space: pre-wrap; }
-.audit-val--empty { color: var(--faint); font-style: italic; }
+.audit-val--empty { color: var(--muted); font-style: italic; }
 .audit-val pre { margin: 0; max-height: 220px; overflow: auto; padding: 8px 10px; border-radius: 6px; background: #f4f4f4; font-size: 12px; white-space: pre-wrap; }
 .audit-val img { width: 64px; height: 64px; object-fit: cover; border-radius: 7px; border: 1px solid var(--line); background: #f3f3f3; }
+.audit-val a:has(.icon-sm) { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12.5px; }
 .audit-val .audit-sw { display: inline-block; width: 14px; height: 14px; margin-right: 6px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, 0.15); vertical-align: -2px; }
 .audit-val ul { display: flex; flex-wrap: wrap; gap: 4px; }
 .audit-val li.badge { height: auto; min-height: 22px; white-space: normal; }
@@ -511,7 +512,7 @@ export default {
         if (v.every((x) => x === null || typeof x !== 'object'))
           return wrap(html`<ul>${v.map((x) => html`<li class="badge badge--plain">${/^[0-9a-f-]{36}$/i.test(String(x)) ? shortId(x) : String(x)}</li>`)}</ul>`);
       }
-      return wrap(html`<pre>${JSON.stringify(v, null, 2)}</pre>`);
+      return wrap(html`<pre tabindex="0" aria-label="${fieldLabel(key)}">${JSON.stringify(v, null, 2)}</pre>`);
     }
 
     const sortKeys = (keys) =>
@@ -575,6 +576,19 @@ export default {
         actions: html`${openLink(r)}<button class="btn btn--primary" type="button" data-close>Fechar</button>`,
         onMount(el, close) {
           $$('a[href^="#/"]', el).forEach((a) => a.addEventListener('click', () => close()));
+          // corpo rolável precisa ser alcançável pelo teclado quando não há links/botões dentro
+          const bodyEl = $('.modal__body', el);
+          if (bodyEl && !$('a, button, [tabindex]', bodyEl)) {
+            bodyEl.tabIndex = 0;
+            bodyEl.setAttribute('aria-label', 'Detalhes da alteração');
+          }
+          // imagens antigas podem já ter sido apagadas do storage
+          $$('.audit-val img', el).forEach((img) =>
+            img.addEventListener('error', () => {
+              const link = img.closest('a');
+              if (link) render(link, html`${icon('image', 'icon-sm')} imagem removida`);
+            })
+          );
         },
       });
     }
