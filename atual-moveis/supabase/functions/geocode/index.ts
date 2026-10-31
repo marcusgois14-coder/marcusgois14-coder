@@ -115,8 +115,8 @@ Deno.serve(async (req) => {
 
     const address = { cep, street, number, district, city, state };
 
-    // Coordenadas mais precisas: endereço com número
-    if (street && city) {
+    // Coordenadas mais precisas: endereço com número (sem número, as coordenadas do CEP já bastam)
+    if (street && city && (number || !cepCoords)) {
       const key = `addr:${[street, number, city, state].join('|').toLowerCase()}`;
       const hit = await cached(key);
       if (hit?.lat) return json({ ...hit, precision: number ? 'address' : 'street', source: 'cache', address });
