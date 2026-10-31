@@ -11,6 +11,7 @@
 //   ctx.can(perm, storeId = ctx.storeId)  perm: view|catalog|orders|customers|coupons|settings|staff
 //   ctx.roleIn(storeId) · ctx.args (segmentos após o módulo) · ctx.query (parâmetros ?a=b da rota)
 //   ctx.setTitle(titulo, subtitulo?) · ctx.setActions(html``) · ctx.navigate('#/orders/123')
+//   ctx.setStore(storeId|null, '#/rota'?) · ctx.reloadStores()
 //   ctx.pickStore(view, mensagem) → desenha seletor de loja quando o módulo exige uma loja
 //   ctx.onCleanup(fn) · ctx.refreshBadges() · ctx.on('new-order', fn)
 import { sb, rpc, friendlyError } from './api.js';
@@ -85,6 +86,11 @@ const emit = (event, data) => (listeners[event] || []).forEach((fn) => fn(data))
 ctx.navigate = (hash) => {
   if (location.hash === hash) route();
   else location.hash = hash;
+};
+// Troca a loja selecionada (null = toda a rede) e, opcionalmente, vai para outra rota.
+ctx.setStore = (id, hash) => {
+  if (hash) history.replaceState(null, '', hash);
+  setStore(id);
 };
 
 ctx.setTitle = (title, sub = '') => {
