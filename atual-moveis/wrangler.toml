@@ -1,0 +1,4 @@
+# Cloudflare Pages: site estático gerado em dist/ por scripts/build-cloudflare.mjs
+name = "atual-moveis"
+pages_build_output_dir = "dist"
+compatibility_date = "2025-10-01"
