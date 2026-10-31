@@ -6,7 +6,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "PORT=8080 node server.js"
+    "dev": "PORT=8080 node server.js",
+    "build:cloudflare": "node scripts/build-cloudflare.mjs",
+    "deploy:cloudflare": "node scripts/build-cloudflare.mjs && npx wrangler@4 pages deploy dist --project-name atual-moveis --branch main"
   },
   "engines": {
     "node": ">=18"

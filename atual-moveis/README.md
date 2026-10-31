@@ -67,3 +67,27 @@ Em `assets/css/style.css`, no topo:
 ## Deploy na SquareCloud
 
 O `squarecloud.app` já está pronto (`MAIN=server.js`, 512 MB, subdomínio `atualmoveis`). Basta compactar o conteúdo da pasta `atual-moveis/` em um `.zip` e enviar, ou usar a CLI da SquareCloud de dentro da pasta.
+
+## Deploy no Cloudflare Pages
+
+O site é estático (o banco é o Supabase), então roda no Cloudflare Pages sem servidor.
+`node scripts/build-cloudflare.mjs` gera a pasta `dist/` só com os arquivos públicos
+(`index.html`, `assets/`, `admin/`, `robots.txt`), mais `_redirects` (rotas `/loja/…` e
+`/pedido/…` abrem o `index.html`) e `_headers` (cabeçalhos de segurança e cache).
+
+**Pelo painel da Cloudflare (sem token):** Workers & Pages → Create → Pages → Connect to Git →
+escolha este repositório e preencha:
+
+| Campo | Valor |
+| --- | --- |
+| Production branch | `claude/atual-moveis-site` (ou `main`, depois do merge) |
+| Root directory | `atual-moveis` |
+| Build command | `node scripts/build-cloudflare.mjs` |
+| Build output directory | `dist` |
+
+**Pela linha de comando:** com `CLOUDFLARE_API_TOKEN` (permissão *Cloudflare Pages: Edit*) e
+`CLOUDFLARE_ACCOUNT_ID` definidos, rode `npm run deploy:cloudflare` dentro de `atual-moveis/`.
+
+Depois do primeiro deploy, adicione o endereço `https://<projeto>.pages.dev` em Supabase →
+Authentication → URL Configuration (Site URL e Redirect URLs), para o "esqueci minha senha"
+do painel funcionar.
