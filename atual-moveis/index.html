@@ -24,6 +24,9 @@
   <link rel="preload" as="image" href="/assets/img/hero-1-m.webp" type="image/webp" media="(max-width: 749px)" fetchpriority="high">
   <link rel="stylesheet" href="/assets/css/style.css">
   <link rel="stylesheet" href="/assets/css/shop.css">
+  <link rel="stylesheet" href="/assets/css/viewer3d.css">
+  <link rel="stylesheet" href="/assets/css/room3d.css">
+  <script type="importmap">{"imports":{"three":"/assets/vendor/three/three.module.min.js","three/addons/":"/assets/vendor/three/addons/"}}</script>
 </head>
 <body>
   <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
@@ -142,6 +145,7 @@
 
     <!-- Listagem (categoria, coleção ou busca) -->
     <section class="listing" data-listing hidden aria-labelledby="listing-title"></section>
+    <section class="room3d" data-room hidden aria-labelledby="room3d-title"></section>
   </main>
 
   <footer class="footer">
@@ -246,6 +250,7 @@
   <div class="sheet sheet--picker" id="picker-sheet" role="dialog" aria-modal="true" aria-label="Escolha sua loja" aria-hidden="true" data-sheet></div>
   <div class="sheet sheet--checkout" id="checkout-sheet" role="dialog" aria-modal="true" aria-label="Finalizar compra" aria-hidden="true" data-sheet></div>
   <div class="sheet sheet--track" id="track-sheet" role="dialog" aria-modal="true" aria-label="Acompanhar pedido" aria-hidden="true" data-sheet></div>
+  <div class="sheet sheet--3d" id="viewer3d-sheet" role="dialog" aria-modal="true" aria-label="Produto em 3D" aria-hidden="true" data-sheet></div>
 
   <!-- WhatsApp flutuante -->
   <a class="whats-float" href="#" data-store-wa target="_blank" rel="noopener" aria-label="Fale com a loja pelo WhatsApp">

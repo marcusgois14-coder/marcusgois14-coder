@@ -75,7 +75,7 @@ const DEFAULTS = {
   bed: { w: 150, h: 100, d: 205, material: 'wood', colors: { main: '#c8995e', accent: '#f3f1ec', wood: '#c8995e', metal: '#2b2b2b' } },
   bunk_bed: { w: 100, h: 160, d: 200, material: 'wood', colors: { main: '#f2f0ea', accent: '#f3f1ec', wood: '#c8995e', metal: '#2b2b2b' } },
   crib: { w: 132, h: 95, d: 72, material: 'wood', colors: { main: '#f2f0ea', accent: '#f3f1ec', wood: '#c8995e', metal: '#2b2b2b' } },
-  mattress: { w: 138, h: 28, d: 188, material: 'fabric', colors: { main: '#f4f3ef', accent: '#d8d4cc', wood: WOOD, metal: '#2b2b2b' } },
+  mattress: { w: 138, h: 28, d: 188, material: 'fabric', colors: { main: '#dfe2e4', accent: '#2f3136', wood: WOOD, metal: '#2b2b2b' } },
   nightstand: { w: 50, h: 55, d: 40, material: 'mdf', colors: { main: '#c8a67a', accent: '#d9b98a', wood: '#c8995e', metal: '#b8a16a' } },
   dresser: { w: 120, h: 85, d: 45, material: 'mdf', colors: { main: '#d9bf94', accent: '#d9b98a', wood: '#c8995e', metal: '#b8a16a' } },
   wardrobe: { w: 180, h: 220, d: 55, material: 'mdf', colors: { main: '#e9e4da', accent: '#c8995e', wood: '#c8995e', metal: '#9a9a9a' } },
@@ -124,15 +124,35 @@ function dimsDefault(kind, st) {
   else if (kind === 'fridge') o = st.freezer === 'chest' ? { w: 110, h: 90, d: 70 } : st.minibar ? { w: 48, h: 85, d: 50 } : st.wine ? { w: 35, h: 80, d: 50 } : null;
   else if (kind === 'fan') o = null;
   if (kind === 'small_appliance' && st.appliance === 'fan' && st.ceiling) o = { w: 105, h: 45, d: 105 };
+  // ventilador de mesa / parede é bem mais baixo que o de coluna (padrão)
+  if (kind === 'small_appliance' && st.appliance === 'fan' && !st.ceiling && / de (mesa|parede) /.test(st._name || '')) o = / de mesa /.test(st._name) ? { w: 35, h: 50, d: 26 } : { w: 45, h: 55, d: 32 };
   if (kind === 'small_appliance' && st.appliance === 'vacuum' && /robo/.test(st._name || '')) o = { w: 33, h: 9, d: 33 };
   if (kind === 'stove' && st.cooktop) o = { w: 60, h: 6, d: 52 };
   if (kind === 'washer' && st.frontLoad) o = { w: 60, h: 85, d: 60 };
   if (kind === 'air_conditioner' && st.portable) o = { w: 45, h: 75, d: 38 };
   if (kind === 'chair' && st.office) o = { w: 62, h: 115, d: 62 };
+  // assentos: banqueta baixa/alta, poltrona reclinável, bergère, de balanço e sofá retrátil
+  if (kind === 'stool' && !st.bench && / baix[oa]s? /.test(st._name || '')) o = { w: 38, h: 45, d: 38 };
+  if (kind === 'stool' && !st.bench && / (alt[oa]s?|bar|balcao) /.test(st._name || '')) o = { w: 40, h: 75, d: 40 };
+  if (kind === 'armchair' && st.reclinable) o = { w: 88, h: 102, d: 92 };
+  if (kind === 'armchair' && st.wing) o = { w: 78, h: 105, d: 82 };
+  if (kind === 'armchair' && / balanco /.test(st._name || '')) o = { w: 66, h: 100, d: 90 };
+  if (kind === 'sofa' && (st.reclinable || st.retractable)) o = { h: 98, d: 105 };
   if (kind === 'stool' && st.bench) o = { w: 110, h: 45, d: 38 };
   if (kind === 'pouf' && st.bench) o = { w: 110, h: 45, d: 42 };
   if (kind === 'mattress' && st.pillow) o = { w: 50, h: 15, d: 70 };
+  if (kind === 'bed' && st.headboardOnly) o = { w: 160, h: 120, d: 10 };
   if (kind === 'tv' && st.monitor) o = { w: 54, h: 42, d: 18 };
+  // sala/cozinha: subtipos com medidas bem diferentes do padrão do tipo
+  const nm = st._name || '';
+  if (kind === 'side_table' && st.console) o = { w: 120, h: 80, d: 35 };
+  if (kind === 'desk' && st.vanity) o = { w: 100, h: 140, d: 42 };
+  if (kind === 'rack' && st.panel) o = { w: 180, h: 160, d: 35 };
+  if (kind === 'shelf' && / nichos? /.test(nm) && !/ estantes? /.test(nm)) o = { w: 40, h: 30, d: 25 };
+  if (kind === 'kitchen_cabinet' && / aereos? /.test(nm)) o = { w: 120, h: 60, d: 32 };
+  else if (kind === 'kitchen_cabinet' && / paneleiros? /.test(nm)) o = { w: 70, h: 200, d: 52 };
+  else if (kind === 'kitchen_cabinet' && / (balcao|balcoes|gabinetes?) /.test(nm)) o = { w: 120, h: 86, d: 50 };
+  if (st.shape === 'round' && (kind === 'coffee_table' || kind === 'dining_table')) o = kind === 'coffee_table' ? { w: 80, h: 40, d: 80 } : { w: 110, h: 77, d: 110 };
   return o ? { ...def, ...o } : def;
 }
 
@@ -329,11 +349,13 @@ const RULE_TABLE = [
   ['crib', ['bercos?', 'mini bercos?', 'bercos? portateis', 'berco portatil']],
   ['mattress', ['colchao', 'colchoes', 'colchonetes?']],
   ['mattress', ['travesseiros?'], { pillow: true }],
+  ['bed', ['bases? box'], { box: true, baseOnly: true }],
   ['bed', ['camas? box', 'box bau', 'base box', 'box conjugados?', 'conjuntos? box', 'cama box bau'], { box: true }],
   ['bed', ['bicamas?'], { trundle: true }],
   ['bed', ['cabeceiras?( estofadas?| de cama| para cama)?'], { headboardOnly: true }],
   ['bed', ['camas?', 'camas? de casal', 'camas? casal', 'camas? solteiro', 'mini camas?', 'camas? montessorianas?', 'camas? infantis?']],
   ['nightstand', ['criados? mudos?', 'criados?', 'mesas? de cabeceira', 'mesinhas? de cabeceira']],
+  ['dresser', ['sapateiras?'], { shoeCabinet: true }],
   ['dresser', ['comodas?', 'gaveteiros?', 'chiffoniers?', 'chifoniers?', 'sapateiras?']],
   ['dresser', ['buffets?', 'bufes?', 'bufets?'], { sideboard: true }],
   ['wardrobe', ['guarda roupas?', 'guardaroupas?', 'roupeiros?', 'closets?', 'armarios? de quarto', 'armarios? multiuso', 'armarios? de solteiro', 'armarios? casal']],
@@ -357,7 +379,7 @@ const RULE_TABLE = [
   ['desk', ['escrivaninhas?', 'mesas? (de|para) (escritorio|computador|estudos?|notebook)', 'mesas? gamer', 'mesas? home office', 'home office', 'bancadas? de estudos?', 'bancadas?( para notebook)?']],
   ['desk', ['escritorios?', 'office'], {}, true],
   ['desk', ['penteadeiras?'], { vanity: true, mirror: true }],
-  ['rack', ['racks?', 'home theaters?', 'home theater', 'estantes? home( theater)?', 'estantes? para tv']],
+  ['rack', ['racks?', 'home theaters?', 'home theater', 'estantes? home(?! office)( theater)?', 'estantes? para tv']],
   ['rack', ['paineis?( para tv| de tv)?', 'painel( para tv| de tv)?'], { panel: true }],
   ['shelf', ['estantes?', 'prateleiras?', 'nichos?', 'livreiros?', 'cantoneiras?', 'expositores?', 'bibliotecas?', 'estantes? de livros', 'estantes? para livros']],
   ['shelf', ['cristaleiras?'], { glassDoors: true }],
@@ -603,6 +625,13 @@ function inferMaterial(kind, p, variant) {
     }
     if (UPHOLSTERED.has(kind)) return DEFAULTS[kind].material;
   }
+  // camas: tecido no nome ou na variante (cabeceira estofada, veludo, linho, corino...) define o material
+  if (kind === 'bed') {
+    for (const t of sources.slice(0, 2)) {
+      const u = firstOf(UPHOLSTERY, t);
+      if (u) return u;
+    }
+  }
   for (const t of sources.slice(1)) {
     const b = firstOf(BODY.filter((r) => r.id !== 'cane'), t);
     if (b) return b;
@@ -672,6 +701,7 @@ function parseStyle(kind, p, variant, rawText) {
   if (has(t, 'sem bracos?')) st.arms = false;
   else if (has(t, 'com bracos?|bracos rolados|braco')) st.arms = true;
   if (has(t, 'bracos? rolados?')) st.rolledArms = true;
+  if (has(t, 'orelhas?|bergere|wingback')) st.wing = true;
   if (has(t, 'giratori[oa]s?|giratoria')) st.swivel = true;
   if (has(t, 'rodizios?|rodinhas?')) st.wheels = true;
   // pés
@@ -789,6 +819,7 @@ function dimsFromText(kind, text, flat = FLAT.has(kind), dh = DEFAULTS[kind]?.h 
     const v = toCm(m[1], m[2]);
     if (v) {
       if (kind === 'mattress' && v <= 45) return { h: v };
+      if (kind === 'stool' && v <= 100) return { h: v }; // "Banqueta 75 cm" é a altura
       return { w: v };
     }
   }
@@ -816,7 +847,7 @@ function dimsFromSpecs(kind, p, flat, dh) {
 
 function inferDims(kind, p, style) {
   const def = dimsDefault(kind, { ...style, _name: normText(p.name) });
-  const flat = FLAT.has(kind) || (kind === 'generic' && (style.decor === 'rug' || style.textile));
+  const flat = (FLAT.has(kind) && !style.headboardOnly) || (kind === 'generic' && (style.decor === 'rug' || style.textile));
   const out = { w: pos(p.width_cm), h: pos(p.height_cm), d: pos(p.depth_cm) };
   // conserta unidades digitadas erradas (mm ou metros)
   for (const k of ['w', 'h', 'd']) {
@@ -839,7 +870,7 @@ function inferDims(kind, p, style) {
     const ms = MATTRESS_SIZES[style.mattressSize] || (kind === 'crib' ? MATTRESS_SIZES.berco : null);
     if (ms) {
       if (kind === 'mattress') fill({ w: ms.w, d: ms.d, h: style.pillowTop ? 30 : 25 });
-      else if (kind === 'bed') fill({ w: ms.w + 12, d: ms.d + 17 });
+      else if (kind === 'bed') fill(style.headboardOnly ? { w: ms.w + 12 } : { w: ms.w + 12, d: ms.d + 17 });
       else fill({ w: ms.d + 8, d: ms.w + 10 });
     }
   }
@@ -849,7 +880,19 @@ function inferDims(kind, p, style) {
     const ph = diag * 0.4903 + 1.5;
     fill({ w: pw, h: ph * 1.12, d: Math.max(18, pw * 0.2) });
   }
+  // sofá de canto (em L) e com chaise são mais profundos; o de canto divide os lugares nos dois lados
+  if (kind === 'sofa' && style.corner) fill({ w: style.seats ? Math.max(200, Math.ceil(style.seats / 2) * 65 + 110) : 250, d: 200 });
+  if (kind === 'sofa' && style.chaise && !style.corner) fill({ d: 160 });
   if (kind === 'sofa' && style.seats) fill({ w: style.seats * 60 + 40 });
+  // mesa redonda: uma medida só vale como diâmetro; com cadeiras, o diâmetro vem do número de lugares
+  if (FAMILY[kind] === 'table' && style.shape === 'round') {
+    if (out.w != null && out.d == null) out.d = out.w;
+    else if (out.d != null && out.w == null) out.w = out.d;
+    if (kind === 'dining_table' && style.chairs) {
+      const dd = style.chairs <= 4 ? 100 : style.chairs <= 6 ? 120 : 140;
+      fill({ w: dd, d: dd });
+    }
+  }
   if (kind === 'dining_table' && style.chairs) fill(style.chairs <= 4 ? { w: 120, d: 80 } : style.chairs <= 6 ? { w: 160, d: 90 } : { w: 200, d: 100 });
   for (const k of ['w', 'h', 'd']) if (out[k] == null) out[k] = def[k];
 
