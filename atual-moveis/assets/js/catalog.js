@@ -1116,7 +1116,7 @@ export function initProductSheet() {
       setLocation(await resolveCep(cep));
       updateStoreUI();
       renderPdp();
-      $('#pdp-cep', el)?.focus({ preventScroll: true });
+      if (!matchMedia('(pointer: coarse)').matches) $('#pdp-cep', el)?.focus({ preventScroll: true });
     } catch (err) {
       out.innerHTML = `<p class="f-error">${esc(bizMessage(err))}</p>`;
     }

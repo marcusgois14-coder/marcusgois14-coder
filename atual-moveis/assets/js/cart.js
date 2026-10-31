@@ -486,7 +486,14 @@ function goStep(n, focus = true) {
   renderCheckout();
   const body = $('#checkout-sheet .sheet__body');
   if (body) body.scrollTop = 0;
-  if (focus) requestAnimationFrame(() => $('#checkout-sheet [data-co-step] input, #checkout-sheet [data-co-step] select')?.focus({ preventScroll: true }));
+  if (!focus) return;
+  // No celular, foca o título da etapa (sem abrir o teclado); no computador, o primeiro campo.
+  requestAnimationFrame(() => {
+    const touch = matchMedia('(pointer: coarse)').matches;
+    const target = touch ? $('#checkout-sheet [data-co-step] h3') : $('#checkout-sheet [data-co-step] input, #checkout-sheet [data-co-step] select');
+    if (touch && target) target.setAttribute('tabindex', '-1');
+    target?.focus({ preventScroll: true });
+  });
 }
 
 export function openCheckout() {

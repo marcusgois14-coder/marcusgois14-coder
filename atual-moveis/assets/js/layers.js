@@ -138,10 +138,16 @@ export function closeSheet(restore = true, silent = false) {
 }
 
 // Foca o primeiro campo quando a animação deixa o elemento visível (inclusive com movimento reduzido).
+// Em telas de toque não coloca o cursor num campo de texto ao abrir (abriria o teclado e daria zoom no iPhone):
+// o foco vai para o botão de fechar, e a pessoa toca no campo quando quiser digitar.
+const isTouch = () => matchMedia('(pointer: coarse)').matches;
 function focusInside(el, selector) {
   let tries = 0;
   const go = () => {
-    const target = (selector && $(selector, el)) || $('[autofocus]', el) || focusables(el)[0];
+    let target = (selector && $(selector, el)) || $('[autofocus]', el) || focusables(el)[0];
+    if (!selector && isTouch() && target?.matches('input, textarea, select')) {
+      target = $('[data-sheet-close], [data-close], .sheet__close, .drawer__close', el) || target;
+    }
     if (target && (target.offsetWidth || target.getClientRects().length) && getComputedStyle(el).visibility !== 'hidden') {
       target.focus({ preventScroll: true });
     } else if (tries++ < 30) requestAnimationFrame(go);

@@ -1512,3 +1512,13 @@ ol {
   .card { box-shadow: none; }
   body { background: #fff; }
 }
+
+/* iPhone/Android: campos com fonte menor que 16 px fazem o navegador dar zoom ao tocar e o zoom não volta.
+   Em telas de toque ou estreitas, todo campo de digitação usa 16 px. */
+@media (max-width: 989px), (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
