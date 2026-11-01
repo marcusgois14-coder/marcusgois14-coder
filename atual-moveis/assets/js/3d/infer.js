@@ -700,7 +700,7 @@ function firstOf(table, text) {
   }
   return best?.id || null;
 }
-function inferMaterial(kind, p, variant) {
+function inferMaterial(kind, p, variant, rs = {}) {
   const specMat = specList(p)
     .filter((s) => /revestimento|tecido|material|acabamento|estrutura|tampo|corpo|base|assento/i.test(normText(s.label)))
     .map((s) => s.value)
@@ -737,6 +737,8 @@ function inferMaterial(kind, p, variant) {
   // a cor do variante "Inox" vale como material em eletros
   if (FAMILY[kind] === 'appliance' && /inox|aco/.test(normText(variant?.name))) return 'steel';
   for (const t of sources.slice(1)) if (firstOf(BODY.filter((r) => r.id === 'cane'), t)) return kind === 'generic' ? 'cane' : DEFAULTS[kind]?.material || 'mdf';
+  // têxteis, tapetes e cortinas sem material citado são de tecido (não MDF)
+  if (kind === 'generic' && (rs.textile || rs.decor === 'rug' || rs.decor === 'curtain')) return 'fabric';
   return DEFAULTS[kind]?.material || 'mdf';
 }
 
@@ -1129,7 +1131,8 @@ function inferDims(kind, p, style) {
   // ventilador de teto com 3, 5 ou 6 pás: a largura é o diâmetro em X e a profundidade sai da geometria
   if (kind === 'small_appliance' && style.appliance === 'fan' && style.ceiling) {
     const n = style.blades || 4;
-    if (n % 4) out.d = Math.round(ceilingFanLayout(n, out.w / 100).d * 1000) / 10;
+    // com 4 ou 8 pás o círculo fecha: profundidade = largura (diâmetro informado uma vez só)
+    out.d = n % 4 ? Math.round(ceilingFanLayout(n, out.w / 100).d * 1000) / 10 : out.w;
   }
   return out;
 }
@@ -1138,14 +1141,15 @@ function inferDims(kind, p, style) {
 // aberta define a largura (X) e a profundidade (Z) é o que sobra. O gerador usa a mesma conta.
 //   n pás, largura wM (m) -> { tip: raio da ponta da pá (m), phase (rad), d: profundidade (m), zc: centro em Z (m) }
 export const FAN_BLADE_W = 0.12; // largura da pá (m)
+const FAN_HUB_R = 0.09; // raio do motor (m): com 2 pás é ele que define a profundidade
 export function ceilingFanLayout(n, wM) {
   const k = Math.max(2, Math.min(8, Math.round(Number(n)) || 4));
   const phase = k % 2 ? Math.PI / 2 : 0;
   const ext = (tip) => {
-    let x0 = Infinity;
-    let x1 = -Infinity;
-    let z0 = Infinity;
-    let z1 = -Infinity;
+    let x0 = -FAN_HUB_R;
+    let x1 = FAN_HUB_R;
+    let z0 = -FAN_HUB_R;
+    let z1 = FAN_HUB_R;
     for (let i = 0; i < k; i++) {
       const a = phase + (i / k) * Math.PI * 2;
       const ux = Math.cos(a);
@@ -1258,7 +1262,7 @@ export function inferSpec(product, ctx = {}) {
   if (kind === 'none') return null;
 
   const over = isObj(p.model3d) ? p.model3d : {};
-  const material = typeof over.material === 'string' && over.material ? over.material : inferMaterial(kind, p, variant);
+  const material = typeof over.material === 'string' && over.material ? over.material : inferMaterial(kind, p, variant, ruleStyle);
   const rawText = [p.name, p.short_description, specText(p), tagText(p)].filter(Boolean).join(' . ');
   const parsed = parseStyle(kind, p, variant, rawText);
   // os ajustes de estilo do model3d já valem para as medidas ("shape: round" numa mesa de 60 cm -> 60 x 60)
