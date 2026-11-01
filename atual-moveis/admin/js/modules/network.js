@@ -3,7 +3,7 @@
 // que limita todas as lojas pelo gatilho stores_guard), contato, SEO, rodapé,
 // benefícios (sempre 4), faixa rolante e buscas populares da loja virtual.
 import { sb, q, uploadImage, removeImage, mediaUrl } from '../api.js';
-import { html, render, $, $$, raw, icon, toast, toastError, withBusy, loading, errorBlock, injectStyle, num, phone, datetime, confirmDialog } from '../ui.js';
+import { html, render, $, $$, raw, icon, toast, toastError, withBusy, loading, errorBlock, injectStyle, num, money, phone, datetime, confirmDialog } from '../ui.js';
 
 const CSS = `
 .netcfg { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start; }
@@ -29,7 +29,7 @@ const CSS = `
 .netcfg-logo__tile.is-dark { border-color: #141414; background: #141414; }
 .netcfg-logo__tile.is-brand { border-color: transparent; background: var(--netcfg-p, #e01b26); }
 .netcfg-logo__tile.is-brand span { color: #fff; }
-.netcfg [data-wa-hint] a { text-decoration: underline; }
+.netcfg [data-wa-hint] a { text-decoration: underline; white-space: nowrap; }
 .netcfg-logo__tile img { max-width: 100%; max-height: 50px; width: auto; height: auto; object-fit: contain; }
 .netcfg-logo__tile span { position: absolute; left: 8px; bottom: 6px; font-size: 10.5px; font-weight: 600; color: var(--muted); }
 .netcfg-logo__tile.is-dark span { color: #9a9a9a; }
@@ -50,7 +50,7 @@ const CSS = `
 .netcfg-preview__price { display: flex; flex-direction: column; margin-right: auto; }
 .netcfg-preview__price strong { font-size: 20px; color: var(--p); line-height: 1.1; }
 .netcfg-preview__price span { font-size: 12px; color: var(--muted); }
-.netcfg-preview__tag { padding: 3px 9px; border-radius: 999px; background: var(--a); color: #191919; font-size: 11.5px; font-weight: 700; }
+.netcfg-preview__tag { padding: 3px 9px; border-radius: 999px; background: var(--a); color: var(--a-ink, #191919); font-size: 11.5px; font-weight: 700; }
 .netcfg-preview__btn { display: inline-flex; align-items: center; height: 38px; padding: 0 16px; border-radius: 999px; background: var(--p); color: #fff; font-weight: 700; }
 .netcfg-preview__ghost { display: inline-flex; align-items: center; height: 38px; padding: 0 16px; border-radius: 999px; border: 1.5px solid var(--p); color: var(--p); font-weight: 700; }
 .netcfg-preview__strip { padding: 8px 14px; border-radius: var(--radius-sm); background: var(--p); color: #fff; font-size: 12.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -103,6 +103,8 @@ body:has(.netcfg__bar) .toasts { bottom: 92px; }
   .netcfg-logo__tiles { grid-template-columns: 1fr; }
   .netcfg-logo__tile { height: 112px; }
   .netcfg-list__add { padding-left: 0; }
+  .netcfg-list__n { display: none; }
+  .netcfg-list__item .error { padding-left: 0; }
   .netcfg__bar { padding: 10px 12px; }
   .netcfg__bar .btn { flex: 1; }
   .netcfg__status { flex-basis: 100%; }
@@ -116,6 +118,7 @@ const DEFAULT_LOGO = '/assets/brand/atual-logo-horizontal.svg';
 const DEFAULT_LOGO_WHITE = '/assets/brand/atual-logo-horizontal-white.svg';
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 const MAX_FILE = 8 * 1024 * 1024;
+const PREVIEW_PRICE = 2000; // preço cheio (cartão) do produto de exemplo da prévia
 
 const BENEFIT_ICONS = {
   shield: { label: 'Escudo (garantia)', svg: '<path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6z"/><path d="m8.8 12 2.2 2.2 4.3-4.4"/>' },
@@ -171,17 +174,20 @@ function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
-// Contraste WCAG entre texto branco e a cor
-function contrastWithWhite(hex) {
+// Luminância relativa (WCAG) e contraste com texto branco / quase preto (#191919)
+function luminance(hex) {
   const rgb = hexToRgb(hex);
-  if (!rgb) return 21;
+  if (!rgb) return 0;
   const [r, g, b] = rgb.map((c) => {
     const s = c / 255;
     return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   });
-  const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return 1.05 / (L + 0.05);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
+const INK_L = luminance('#191919');
+const contrastWithWhite = (hex) => (hexToRgb(hex) ? 1.05 / (luminance(hex) + 0.05) : 21);
+const contrastWithInk = (hex) => (luminance(hex) + 0.05) / (INK_L + 0.05);
+const ratioText = (r) => `${r.toFixed(1).replace('.', ',')}:1`;
 
 function normalizeWhatsapp(v) {
   let d = digits(v);
@@ -323,17 +329,17 @@ export default {
                   <input type="color" data-pick="accent_color" value="${HEX_RE.test(orig.accent_color) ? orig.accent_color.toLowerCase() : '#f4802b'}" aria-label="Escolher a cor de apoio">
                   <input class="input" id="net-accent" name="accent_color" maxlength="7" value="${orig.accent_color || ''}" placeholder="#F4802B" spellcheck="false" autocomplete="off">
                 </div>
-                <span class="hint">Use um tom claro o bastante para texto escuro por cima.</span>
+                <span class="hint" data-contrast-accent></span>
               </div>
               <div class="col-12 netcfg-preview" data-color-preview aria-label="Prévia das cores">
                 <div class="netcfg-preview__sw">
                   <div><i style="background:var(--p)"></i><span data-sw="primary_color"></span></div>
                   <div><i style="background:var(--a)"></i><span data-sw="accent_color"></span></div>
                 </div>
-                <div class="netcfg-preview__strip">Entrega em até 30 km · Parcele sem juros · 5% OFF no PIX</div>
+                <div class="netcfg-preview__strip" data-pv-strip></div>
                 <div class="netcfg-preview__card">
-                  <div class="netcfg-preview__price"><span>Sofá retrátil 3 lugares</span><strong>R$ 1.899,00</strong><span>no PIX · ou 10x de R$ 199,90</span></div>
-                  <span class="netcfg-preview__tag">5% OFF no PIX</span>
+                  <div class="netcfg-preview__price"><span>Sofá retrátil 3 lugares</span><strong data-pv-pix></strong><span data-pv-terms></span></div>
+                  <span class="netcfg-preview__tag" data-pv-tag></span>
                   <span class="netcfg-preview__ghost">Detalhes</span>
                   <span class="netcfg-preview__btn">Comprar</span>
                 </div>
@@ -737,7 +743,7 @@ export default {
       const inst = data.default_installments;
       if (inst === null || !Number.isInteger(inst) || inst < 1 || inst > 24) errors.default_installments = 'Número inteiro de 1 a 24';
       const rad = data.default_radius_km;
-      if (rad === null || Number.isNaN(rad) || rad <= 0 || rad > 500) errors.default_radius_km = 'Entre 1 e 500 km';
+      if (rad === null || Number.isNaN(rad) || rad < 1 || rad > 500) errors.default_radius_km = 'Entre 1 e 500 km';
       else data.default_radius_km = Math.round(rad * 100) / 100;
       if (data.support_whatsapp && !/^55\d{10,11}$/.test(data.support_whatsapp)) errors.support_whatsapp = 'Use 55 + DDD + número (12 ou 13 dígitos)';
       if (data.instagram && !validUrl(data.instagram)) errors.instagram = 'Endereço inválido';
@@ -811,9 +817,31 @@ export default {
       const ch = $('[data-contrast]', view);
       ch.textContent =
         ratio < 4.5
-          ? `Atenção: texto branco sobre esta cor tem contraste ${ratio.toFixed(1).replace('.', ',')}:1 (o recomendado é 4,5:1).`
-          : `Contraste com texto branco: ${ratio.toFixed(1).replace('.', ',')}:1 — boa leitura.`;
+          ? `Atenção: texto branco sobre esta cor tem contraste ${ratioText(ratio)} (o recomendado é 4,5:1).`
+          : `Contraste com texto branco: ${ratioText(ratio)} — boa leitura.`;
       ch.style.color = ratio < 4.5 ? 'var(--warning)' : '';
+      // cor de apoio: o texto do selo fica branco ou escuro, o que ler melhor
+      const onWhite = contrastWithWhite(a);
+      const onInk = contrastWithInk(a);
+      const best = Math.max(onWhite, onInk);
+      prev.style.setProperty('--a-ink', onWhite >= onInk ? '#fff' : '#191919');
+      const ca = $('[data-contrast-accent]', view);
+      ca.textContent =
+        best < 4.5
+          ? `Atenção: texto sobre esta cor fica com contraste ${ratioText(best)} (o recomendado é 4,5:1).`
+          : `Selos usam texto ${onWhite >= onInk ? 'branco' : 'escuro'} (contraste ${ratioText(best)}).`;
+      ca.style.color = best < 4.5 ? 'var(--warning)' : '';
+      // valores de exemplo com os padrões digitados (preço cheio no cartão; PIX com desconto)
+      const pv = Number.isFinite(data.default_pix_discount) && data.default_pix_discount >= 0 && data.default_pix_discount <= 50 ? data.default_pix_discount : 0;
+      const inst = Number.isInteger(data.default_installments) && data.default_installments >= 1 && data.default_installments <= 24 ? data.default_installments : 1;
+      const radius = data.default_radius_km > 0 ? data.default_radius_km : 30;
+      const pvText = `${num(pv)}% OFF no PIX`;
+      $('[data-pv-strip]', view).textContent = `Entrega em até ${num(radius)} km · Parcele em até ${inst}x sem juros${pv ? ` · ${pvText}` : ''}`;
+      $('[data-pv-pix]', view).textContent = money(PREVIEW_PRICE * (1 - pv / 100));
+      $('[data-pv-terms]', view).textContent = `${pv ? 'no PIX · ou ' : ''}${inst}x de ${money(PREVIEW_PRICE / inst)} no cartão`;
+      const tag = $('[data-pv-tag]', view);
+      tag.textContent = pvText;
+      tag.hidden = !pv;
       // raio
       const cap = data.default_radius_km;
       const over = cap > 0 ? stores.filter((s) => Number(s.delivery_radius_km) > cap) : [];
@@ -896,6 +924,17 @@ export default {
     baseline = JSON.stringify(collect().data);
     refresh();
 
+    // o erro de um campo some assim que a pessoa começa a corrigi-lo
+    function clearFieldError(target) {
+      const input = target.dataset?.pick ? el(target.dataset.pick) : target;
+      if (!input || input.getAttribute('aria-invalid') !== 'true') return;
+      input.removeAttribute('aria-invalid');
+      const box = input.closest('.field') || input.closest('.netcfg-list__item');
+      const sel = [input.name && `.error[data-for="${window.CSS.escape(input.name)}"]`, input.id && `.error[data-for-id="${window.CSS.escape(input.id)}"]`].filter(Boolean).join(', ');
+      if (box && sel) $$(sel, box).forEach((n) => n.remove());
+    }
+    form.addEventListener('input', (e) => clearFieldError(e.target), true);
+    form.addEventListener('change', (e) => clearFieldError(e.target), true);
     form.addEventListener('input', (e) => {
       if (e.target.closest('[data-b], [data-item], [data-new], [data-pick], [data-file]')) return;
       refresh();

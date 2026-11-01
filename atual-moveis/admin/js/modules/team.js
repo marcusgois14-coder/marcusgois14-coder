@@ -40,7 +40,8 @@ const CSS = `
 .team__count { margin-left: auto; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 .team__person { display: flex; align-items: center; gap: 10px; min-width: 220px; }
 .team__person .avatar { flex: none; background: #2a2a2a; }
-.team__person.is-off .avatar { background: #b5b5b5; }
+.team__person.is-off .avatar { background: #767676; }
+.team .badge--accent { color: var(--danger); } /* contraste AA sobre o fundo rosado */
 .team__name { display: block; padding: 0; border: 0; background: none; color: var(--ink); font-weight: 700; text-align: left; cursor: pointer; }
 .team__name:hover:not(:disabled) { color: var(--accent); text-decoration: underline; }
 .team__name:disabled { cursor: default; }
@@ -69,6 +70,7 @@ const CSS = `
 .team-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .team-form legend { padding: 0; margin-bottom: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .team-form__scope { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; }
+.team-form__scope svg { display: inline-block; vertical-align: -2px; margin-right: 2px; }
 .team-pass { display: flex; }
 .team-pass .input { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 .team-pass .btn { margin-left: -1px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
@@ -155,7 +157,8 @@ export default {
     const networkView = !ctx.storeId; // só administradores da rede chegam aqui sem loja
     const state = { search: '', role: '', store: '', status: '' };
     let rows = [];
-    let menu = null; // { el, btn }
+    let menu = null; // { el, btn, row }
+    let pendingDraw = false; // dados novos chegaram com o menu aberto: redesenha ao fechar
     let highlight = null;
     let loadToken = 0;
     const busy = new Set(); // acessos com uma ação em andamento
@@ -202,7 +205,7 @@ export default {
             : ''}
           <label class="visually-hidden" for="team-status">Filtrar por situação</label>
           <select class="select team__filter" id="team-status" data-filter="status">
-            <option value="">Ativos e desativados</option>
+            <option value="">Ativos e inativos</option>
             <option value="active">Somente ativos</option>
             <option value="inactive">Somente desativados</option>
           </select>
@@ -236,7 +239,9 @@ export default {
         if (my !== loadToken || !view.isConnected) return;
         rows = (res?.rows || []).slice();
         sortRows();
-        draw();
+        // não fecha um menu que a pessoa acabou de abrir só porque a lista foi atualizada
+        if (background && menu) pendingDraw = true;
+        else draw();
       } catch (e) {
         if (my !== loadToken || !view.isConnected) return;
         if (background) return toastError(teamError(e));
@@ -311,7 +316,7 @@ export default {
           label: 'Último acesso',
           cls: 'team__meta-col',
           render: (r) =>
-            r.last_sign_in_at ? html`<span title="${datetime(r.last_sign_in_at)}">${relTime(r.last_sign_in_at)}</span>` : html`<span class="faint">Nunca entrou</span>`,
+            r.last_sign_in_at ? html`<span title="${datetime(r.last_sign_in_at)}">${relTime(r.last_sign_in_at)}</span>` : html`<span class="muted">Nunca entrou</span>`,
         },
         {
           label: html`<span class="visually-hidden">Ações</span>`,
@@ -364,10 +369,33 @@ export default {
 
     function closeMenu(returnFocus = false) {
       if (!menu) return;
-      menu.el.remove();
-      menu.btn.setAttribute('aria-expanded', 'false');
-      if (returnFocus && menu.btn.isConnected) menu.btn.focus();
+      const { el, btn } = menu;
       menu = null;
+      el.remove();
+      btn.setAttribute('aria-expanded', 'false');
+      if (pendingDraw) {
+        pendingDraw = false;
+        draw();
+        if (returnFocus) $(`[data-row-menu="${window.CSS.escape(btn.dataset.rowMenu)}"]`, view)?.focus();
+        return;
+      }
+      if (returnFocus && btn.isConnected) btn.focus();
+    }
+
+    // posiciona o menu junto ao botão (abre para cima se faltar espaço embaixo)
+    function placeMenu() {
+      if (!menu) return;
+      const { el, btn } = menu;
+      const rect = btn.getBoundingClientRect();
+      const topLimit = $('.topbar')?.getBoundingClientRect().bottom || 0; // botão escondido sob a barra fixa
+      if (!btn.isConnected || rect.bottom < topLimit || rect.top > window.innerHeight) return closeMenu();
+      const mw = el.offsetWidth;
+      const mh = el.offsetHeight;
+      const left = Math.min(window.innerWidth - mw - 8, Math.max(8, rect.right - mw));
+      let top = rect.bottom + 6;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 6);
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
     }
 
     function openMenu(btn) {
@@ -391,15 +419,8 @@ export default {
       document.body.appendChild(el);
       menu = { el, btn, row: r };
       btn.setAttribute('aria-expanded', 'true');
-      const rect = btn.getBoundingClientRect();
-      const mw = el.offsetWidth;
-      const mh = el.offsetHeight;
-      let left = Math.min(window.innerWidth - mw - 8, Math.max(8, rect.right - mw));
-      let top = rect.bottom + 6;
-      if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 6);
-      el.style.left = `${left}px`;
-      el.style.top = `${top}px`;
-      $('button:not([disabled])', el)?.focus();
+      placeMenu();
+      $('button:not([disabled])', el)?.focus({ preventScroll: true });
       el.addEventListener('click', (e) => {
         const b = e.target.closest('[data-act]');
         if (!b || b.disabled) return;
@@ -431,7 +452,8 @@ export default {
       if (menu.el.contains(e.target) || menu.btn.contains(e.target)) return;
       closeMenu();
     };
-    const onScroll = () => closeMenu();
+    // rolar a página acompanha o menu (fechar na rolagem atrapalhava no celular)
+    const onScroll = () => placeMenu();
     document.addEventListener('click', onDocClick, true);
     window.addEventListener('resize', onScroll);
     window.addEventListener('scroll', onScroll, true);
@@ -693,7 +715,7 @@ export default {
             <label for="team-cred-pass">Senha</label>
             <div class="team-pass">
               <input class="input" id="team-cred-pass" value="${password || ''}" readonly spellcheck="false" data-pass>
-              <button class="btn" type="button" data-copy-pass>${icon('copy', 'icon-sm')} Copiar</button>
+              <button class="btn" type="button" data-copy-pass autofocus>${icon('copy', 'icon-sm')} Copiar</button>
             </div>
           </div>
           <p class="muted small">Peça para a pessoa entrar em <strong>${panel}</strong> e trocar a senha em <strong>Minha conta</strong> no primeiro acesso.</p>
@@ -703,12 +725,12 @@ export default {
         onMount(el) {
           const input = $('[data-pass]', el);
           input.addEventListener('focus', () => input.select());
-          $('[data-copy-pass]', el).addEventListener('click', async () => {
-            toast((await copyText(password, input)) ? 'Senha copiada.' : 'Não foi possível copiar. Selecione e copie manualmente.', 'success');
-          });
+          const copied = (ok, what) =>
+            ok ? toast(`${what} copiad${what === 'Senha' ? 'a' : 'os'}.`, 'success') : toast('Não foi possível copiar. Selecione e copie manualmente.', 'warning');
+          $('[data-copy-pass]', el).addEventListener('click', async () => copied(await copyText(password, input), 'Senha'));
           $('[data-copy-all]', el).addEventListener('click', async () => {
             const text = `Acesso ao painel Atual Móveis\nEndereço: ${panel}\nE-mail: ${email}\nSenha: ${password}\nTroque a senha em "Minha conta" no primeiro acesso.`;
-            toast((await copyText(text, input)) ? 'Dados de acesso copiados.' : 'Não foi possível copiar. Selecione e copie manualmente.', 'success');
+            copied(await copyText(text, input), 'Dados de acesso');
           });
         },
       });

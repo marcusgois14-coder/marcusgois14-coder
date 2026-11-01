@@ -567,7 +567,7 @@ function stepper(o, events) {
   return html`<ol class="orders-steps" aria-label="Andamento do pedido">${FLOW.map((s, i) => {
     const done = i < idx || (i === idx && s === 'delivered');
     const t = i <= idx ? when(s) : null;
-    return html`<li class="orders-steps__item ${done ? 'is-done' : ''} ${i === idx && !done ? 'is-current' : ''} ${i <= idx ? 'is-reached' : ''}" ${i === idx ? 'aria-current="step"' : ''}>
+    return html`<li class="orders-steps__item ${done ? 'is-done' : ''} ${i === idx && !done ? 'is-current' : ''} ${i <= idx ? 'is-reached' : ''}" ${i === idx ? html`aria-current="step"` : ''}>
       <span class="orders-steps__dot">${done ? icon('check', 'icon-sm') : ''}</span>
       <span class="orders-steps__label">${FLOW_LABEL[s]}</span>
       <span class="orders-steps__time">${t ? shortDT(t) : ''}</span>
@@ -609,7 +609,7 @@ function headCard(o, ctx, items, events, perms) {
               </div>
             </div>
             ${o.status !== 'canceled'
-              ? html`<button class="btn btn--danger" type="button" data-cancel ${locked ? 'disabled title="Somente o administrador da loja cancela pedidos entregues"' : ''}>${icon('close', 'icon-sm')} Cancelar pedido</button>`
+              ? html`<button class="btn btn--danger" type="button" data-cancel ${locked ? html`disabled title="Somente o administrador da loja cancela pedidos entregues"` : ''}>${icon('close', 'icon-sm')} Cancelar pedido</button>`
               : ''}
             <button class="btn" type="button" data-print>${icon('print')} Imprimir</button>
           </div>`

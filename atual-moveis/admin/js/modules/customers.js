@@ -30,6 +30,12 @@ const csvNum = (v) => (Number(v) || 0).toFixed(2).replace('.', ',');
 const csvDate = (v) =>
   v ? new Date(v).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }).replace(',', '') : '';
 const PAY_SHORT = { pending: 'Pendente', paid: 'Pago', refunded: 'Estornado', failed: 'Não aprovado' };
+// Dica do "último pedido": data e hora quando o valor é relativo ("há 2 d"); só a hora quando já é a data
+const lastHint = (v) => {
+  if (!v) return '—';
+  if (/^(há|agora)/.test(relTime(v))) return datetime(v);
+  return `às ${new Date(v).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })}`;
+};
 
 function maskCpf(v) {
   const d = digitsOf(v);
@@ -144,8 +150,9 @@ function openCustomerPanel(ctx, id, { onClose } = {}) {
         q(oq),
       ]);
       if (!el.isConnected) return;
-      const orders = ordersRes?.data || [];
-      const totalOrders = ordersRes?.count ?? orders.length;
+      // q() devolve { data, count } com contagem e só o array quando a contagem não vem
+      const orders = (Array.isArray(ordersRes) ? ordersRes : ordersRes?.data) || [];
+      const totalOrders = Math.max(Array.isArray(ordersRes) ? 0 : Number(ordersRes?.count) || 0, orders.length);
       if (!cust || (!orders.length && !network)) {
         render(
           body,
@@ -203,7 +210,7 @@ function openCustomerPanel(ctx, id, { onClose } = {}) {
             <div class="card kpi"><div class="kpi__label">Ticket médio</div><div class="kpi__value">${money(avg)}</div>
               <div class="kpi__hint">${first ? `Primeiro em ${date(first)}` : '—'}</div></div>
             <div class="card kpi"><div class="kpi__label">Último pedido</div><div class="kpi__value cu-kpi-sm" title="${datetime(last)}">${relTime(last)}</div>
-              <div class="kpi__hint">${datetime(last)}</div></div>
+              <div class="kpi__hint">${lastHint(last)}</div></div>
           </section>
 
           <section class="card">

@@ -104,7 +104,8 @@ const CSS = `
   .audit .pager { flex-direction: column; align-items: stretch; }
   .audit .pager > span { text-align: center; }
   .audit .pager .row { justify-content: space-between; }
-  .audit-detail__meta { grid-template-columns: minmax(0, 1fr); }
+  .audit-detail__meta { grid-auto-flow: dense; gap: 10px 12px; padding: 12px; }
+  .audit-detail__wide { grid-column: span 2; }
   .audit-kv { grid-template-columns: minmax(0, 1fr); }
   .audit-kv dt { border-bottom: 0; padding-bottom: 2px; }
   .audit-diff td:first-child { width: 30%; }
@@ -235,6 +236,7 @@ export default {
     const labels = new Map(); // `${tabela}:${id}` → nome legível
     const categories = new Map();
     let catsLoaded = false;
+    const goneStores = new Map(); // loja excluída → nome tirado do próprio histórico (ou null)
 
     const areas = Object.entries(AREAS).filter(([k]) => networkView || !NETWORK_ONLY_AREAS.includes(k));
 
@@ -310,7 +312,7 @@ export default {
         const [from, to] = range();
         if (from) qy = qy.gte('created_at', dayStart(from));
         if (to) qy = qy.lt('created_at', dayEnd(to));
-        const term = state.email.trim().replace(/[%_\\,()]/g, ' ').trim();
+        const term = state.email.trim().replace(/[%*\\]/g, '').trim();
         if (term) qy = qy.ilike('actor_email', `%${term}%`);
         const res = await q(qy);
         if (my !== token) return;
@@ -321,7 +323,7 @@ export default {
           state.page = Math.max(1, Math.ceil(total / PAGE));
           return load();
         }
-        await resolveLabels(rows);
+        await Promise.all([resolveLabels(rows), resolveStores(rows)]);
         if (my !== token) return;
         draw();
       } catch (e) {
@@ -403,6 +405,26 @@ export default {
       return labels.get(k) || labels.get(`~${k}`) || null;
     };
 
+    /* ---------- Lojas que já foram excluídas ---------- */
+    const knownStore = (id) => ctx.stores.find((s) => s.id === id);
+    async function resolveStores(list) {
+      const ids = [...new Set(list.map((r) => r.store_id).filter((id) => id && !knownStore(id) && !goneStores.has(id)))];
+      if (!ids.length) return;
+      ids.forEach((id) => goneStores.set(id, null));
+      try {
+        const found = await q(sb.from('audit_log').select('record_id, changes').eq('table_name', 'stores').in('record_id', ids).in('action', ['insert', 'delete']).limit(100));
+        found.forEach((f) => typeof f.changes?.name === 'string' && goneStores.set(f.record_id, f.changes.name));
+      } catch {
+        /* sem histórico: fica "Loja excluída" */
+      }
+    }
+    const storeLabel = (id) => {
+      if (!id) return null;
+      const s = knownStore(id);
+      if (s) return s.name;
+      return goneStores.get(id) ? `${goneStores.get(id)} (excluída)` : 'Loja excluída';
+    };
+
     function changedFields(r) {
       if (r.action !== 'update' || !r.changes) return '';
       const keys = changedKeys(r.changes);
@@ -430,7 +452,9 @@ export default {
           render: (r) => html`<span class="audit__when" title="${relTime(r.created_at)}">${datetime(r.created_at)}</span>`,
         },
         { label: 'Quem', cls: 'audit__c-who', render: (r) => html`<span class="audit__who" title="${r.actor_email || ''}">${r.actor_email || 'Sistema'}</span>` },
-        ...(networkView ? [{ label: 'Loja', cls: 'audit__c-store', render: (r) => (r.store_id ? ctx.storeName(r.store_id) : html`<span class="muted">Rede</span>`) }] : []),
+        ...(networkView
+          ? [{ label: 'Loja', cls: 'audit__c-store', render: (r) => (!r.store_id ? html`<span class="muted">Rede</span>` : knownStore(r.store_id) ? storeLabel(r.store_id) : html`<span class="muted">${storeLabel(r.store_id)}</span>`) }]
+          : []),
         { label: 'Área', cls: 'audit__c-area', render: (r) => AREAS[r.table_name] || r.table_name },
         { label: 'Ação', cls: 'audit__c-action', render: (r) => badge(ACTIONS[r.action]?.label || r.action, ACTIONS[r.action]?.tone) },
         {
@@ -481,7 +505,7 @@ export default {
       if (key === 'type' && tbl === 'coupons') return wrap(COUPON_TYPE[v] || v);
       if (key === 'kind' && tbl === 'banners') return wrap(BANNER_KIND[v] || v);
       if (key === 'pix_key_type') return wrap(PIX_TYPE[v] || v);
-      if (key === 'store_id') return wrap(ctx.storeName(v) !== '—' ? ctx.storeName(v) : shortId(v));
+      if (key === 'store_id') return wrap(storeLabel(v));
       if ((key === 'category_id' || key === 'parent_id') && categories.has(v)) return wrap(categories.get(v));
       if (MONEY.has(key) && !Number.isNaN(Number(v))) return wrap(money(v));
       if (PERCENT.has(key)) return wrap(pct(v, Number(v) % 1 ? 1 : 0));
@@ -561,19 +585,19 @@ export default {
         size: 'lg',
         body: html`<div class="stack" style="--gap:16px">
           <dl class="audit-detail__meta">
-            <div><dt>Data/hora</dt><dd>${datetime(r.created_at)} <span class="muted small">(${relTime(r.created_at)})</span></dd></div>
-            <div><dt>Quem</dt><dd>${r.actor_email || 'Sistema'}</dd></div>
-            <div><dt>Loja</dt><dd>${r.store_id ? ctx.storeName(r.store_id) : 'Rede (sem loja)'}</dd></div>
+            <div><dt>Data/hora</dt><dd>${datetime(r.created_at)} <span class="muted small nowrap">(${relTime(r.created_at)})</span></dd></div>
+            <div class="audit-detail__wide"><dt>Quem</dt><dd>${r.actor_email || 'Sistema'}</dd></div>
+            <div><dt>Loja</dt><dd>${r.store_id ? storeLabel(r.store_id) : 'Rede (sem loja)'}</dd></div>
             <div><dt>Área</dt><dd>${AREAS[r.table_name] || r.table_name}</dd></div>
             <div><dt>Ação</dt><dd>${badge(ACTIONS[r.action]?.label || r.action, ACTIONS[r.action]?.tone)}</dd></div>
-            <div><dt>Registro</dt><dd>${label || '—'}<br><span class="mono">${r.record_id || ''}</span></dd></div>
+            <div class="audit-detail__wide"><dt>Registro</dt><dd>${label || '—'}${r.record_id && r.table_name !== 'network_settings' ? html`<br><span class="mono">${r.record_id}</span>` : ''}</dd></div>
           </dl>
           <div class="stack" style="--gap:8px">
             <div class="h3">${heading}</div>
             ${body}
           </div>
         </div>`,
-        actions: html`${openLink(r)}<button class="btn btn--primary" type="button" data-close>Fechar</button>`,
+        actions: html`${openLink(r)}<button class="btn btn--primary" type="button" data-close autofocus>Fechar</button>`,
         onMount(el, close) {
           $$('a[href^="#/"]', el).forEach((a) => a.addEventListener('click', () => close()));
           // corpo rolável precisa ser alcançável pelo teclado quando não há links/botões dentro

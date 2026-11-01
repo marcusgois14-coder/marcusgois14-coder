@@ -327,7 +327,9 @@ function openCouponForm(ctx, { coupon = null, rows = [], defaultStore = null, on
           line = html`Em um pedido de ${baseLabel} o desconto seria <strong>${money(d.discount)}</strong>${d.capped ? ' (limitado ao desconto máximo)' : ''}.`;
           const pix = Number(scopeStore?.pix_discount_pct) || 0;
           if (pix > 0) {
-            const total = Math.round((base - d.discount) * (1 - pix / 100) * 100) / 100;
+            // igual ao place_order: desconto PIX = round((subtotal − cupom) × pct/100, 2)
+            const pixOff = Math.round((base - d.discount) * pix) / 100;
+            const total = Math.round((base - d.discount - pixOff) * 100) / 100;
             pixLine = html`<div class="small cp-example__pix">No PIX (−${pct(pix, Number.isInteger(pix) ? 0 : 1)} na ${scopeStore.name}, aplicado depois do cupom), o cliente pagaria ${money(total)} + frete.</div>`;
           }
         }
@@ -605,6 +607,8 @@ export default {
     const row = (c) => {
       const editable = canEdit(c);
       const isNet = !c.store_id;
+      // na loja, um cupom próprio com o mesmo código tem prioridade sobre o da rede (coupon_eval)
+      const overridden = !network && isNet && st.rows.some((r) => r.store_id && r.code === c.code);
       return html`<tr class="${editable ? 'is-clickable' : ''} ${c.active ? '' : 'cp-off'}" data-id="${c.id}">
         <td class="cp-c-code">
           <div class="cp-code">
@@ -612,8 +616,9 @@ export default {
             <button class="btn btn--ghost btn--sm btn--icon" type="button" data-copy="${c.code}" aria-label="Copiar código ${c.code}" title="Copiar código">${icon('copy', 'icon-sm')}</button>
           </div>
           ${!network && isNet ? html`<div class="mt-1">${badge('Rede', 'accent')}</div>` : ''}
+          ${overridden ? html`<div class="muted small cp-override">Nesta loja vale o cupom da loja</div>` : ''}
         </td>
-        <td class="cp-c-desc"><div class="cp-desc" title="${c.description || ''}">${c.description || html`<span class="faint">—</span>`}</div></td>
+        <td class="cp-c-desc ${c.description ? '' : 'is-empty'}"><div class="cp-desc" title="${c.description || ''}">${c.description || html`<span class="faint">—</span>`}</div></td>
         ${network ? html`<td class="cp-c-store">${isNet ? badge('Rede', 'accent') : html`<span class="small">${ctx.storeName(c.store_id)}</span>`}</td>` : ''}
         <td class="cp-c-disc">${discountCell(c)}</td>
         <td class="num cp-c-min">${Number(c.min_order) > 0 ? money(c.min_order) : html`<span class="faint">—</span>`}</td>
@@ -837,6 +842,7 @@ const CSS = `
 .cp-switch .switch__track { width: 34px; height: 20px; }
 .cp-switch .switch__track::after { width: 14px; height: 14px; }
 .cp-switch input:disabled + .switch__track { opacity: .5; cursor: not-allowed; }
+.cp-override { max-width: 170px; margin-top: 4px; line-height: 1.3; }
 .cp-actions { display: flex; justify-content: flex-end; gap: 2px; }
 .cp-del { color: var(--danger); }
 .cp-off .cp-code__text, .cp-off .cp-c-desc, .cp-off .cp-c-store, .cp-off .cp-c-disc, .cp-off .cp-c-min, .cp-off .cp-c-uses, .cp-off .cp-c-valid { opacity: .55; }
@@ -865,6 +871,7 @@ const CSS = `
   .cp-c-code { grid-area: code; align-self: center; }
   .cp-c-active { grid-area: active; justify-self: end; align-self: center; }
   .cp-c-desc { grid-area: desc; }
+  .cp-table td.cp-c-desc.is-empty { display: none; }
   .cp-desc { min-width: 0; max-width: none; }
   .cp-c-disc { grid-area: disc; }
   .cp-c-min { grid-area: min; }
