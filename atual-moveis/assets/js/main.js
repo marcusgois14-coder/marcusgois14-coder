@@ -12,10 +12,14 @@ import {
   initProductSheet,
   initCatalogClicks,
   openProduct,
+  isProductOpen,
+  closeProductLayers,
+  useInfer3d,
   storePath,
   mqMobile,
 } from './catalog.js';
 import { initCart, loadCart, renderCart, openTrack } from './cart.js';
+import { initMotion } from './motion.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const header = $('[data-header]');
@@ -245,14 +249,91 @@ function initHeader() {
 // /loja/<slug>               página inicial da loja
 // /loja/<slug>?categoria=…    listagem (também ?colecao=, ?busca=, ?todos=1)
 // /loja/<slug>?produto=…      produto aberto sobre a página
+// /loja/<slug>?ambiente=1     "Monte seu ambiente" em 3D (&add=<produto> já coloca um produto)
 // /pedido/<token>             acompanhamento do pedido
 function isListing(params) {
-  return params.has('categoria') || params.has('colecao') || params.has('busca') || params.has('todos');
+  return !isRoom(params) && (params.has('categoria') || params.has('colecao') || params.has('busca') || params.has('todos'));
+}
+const isRoom = (params) => params.get('ambiente') === '1';
+
+/* ---------- Monte seu ambiente (3D, carregado só quando aberto) ---------- */
+const roomEl = $('[data-room]');
+let room = null; // instância de assets/js/3d/room.js
+let roomFor = null; // id da loja do ambiente aberto
+let roomJob = 0;
+
+function enterRoom(params) {
+  const add = params.get('add');
+  if (add) {
+    // o produto entra uma vez; a URL fica limpa (recarregar não repete)
+    const u = new URL(location.href);
+    u.searchParams.delete('add');
+    history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+  }
+  if (room && roomFor === S.store.id) {
+    const p = add && S.bySlug[add];
+    if (p) room.add(p.id);
+    return;
+  }
+  leaveRoom();
+  const job = ++roomJob;
+  roomFor = S.store.id;
+  roomEl.innerHTML = `<div class="room3d__boot" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando o ambiente 3D…</p></div>`;
+  Promise.all([import('./3d/room.js'), import('./3d/infer.js')])
+    .then(([mod, infer]) => {
+      if (job !== roomJob || !isRoom(new URLSearchParams(location.search))) return;
+      useInfer3d(infer);
+      const p = add && S.bySlug[add];
+      let added = 0;
+      room = mod.openRoom({
+        host: roomEl,
+        store: S.store,
+        products: S.products,
+        categories: S.cats,
+        addProductId: p?.id || null,
+        onAddToCart: (l) => {
+          added += l.qty;
+          emit('cart-add', { id: l.id, variant: l.variant, qty: l.qty, open: false });
+          if (l.last) {
+            toast(`${added === 1 ? '1 item adicionado' : `${added} itens adicionados`} ao carrinho`);
+            added = 0;
+          }
+        },
+        onClose: () => {
+          // o ambiente já se desmontou; volta para onde a pessoa estava
+          room = null;
+          roomFor = null;
+          if (history.state?.roomBack) history.back();
+          else navigate(storePath());
+        },
+      });
+      $('#room3d-title', roomEl)?.focus({ preventScroll: true });
+    })
+    .catch((err) => {
+      if (job !== roomJob) return;
+      console.error(err);
+      roomFor = null;
+      roomEl.innerHTML = `<div class="room3d__boot room3d__boot--error" role="alert"><p><strong>Não foi possível abrir o ambiente 3D.</strong>Confira sua conexão e tente de novo.</p>
+        <div class="room3d__boot-actions"><button class="btn btn--primary btn--sm" type="button" data-room-retry>Tentar de novo</button><a class="btn btn--outline btn--sm" href="${esc(storePath())}" data-route>Voltar para a loja</a></div></div>`;
+      $('[data-room-retry]', roomEl).addEventListener('click', () => enterRoom(new URLSearchParams(location.search)));
+    });
+}
+
+function leaveRoom() {
+  roomJob++;
+  if (room) room.close();
+  room = null;
+  roomFor = null;
+  if (roomEl.childElementCount) roomEl.innerHTML = '';
 }
 
 function setTitle() {
   const params = new URLSearchParams(location.search);
   if (params.get('produto') && sheet.el?.id === 'product-sheet') return;
+  if (isRoom(params)) {
+    document.title = `Monte seu ambiente · ${S.store.name}`;
+    return;
+  }
   if (isListing(params)) return; // renderListing define o título
   const st = S.store;
   document.title = `${st.name} | Móveis, colchões e eletro em ${st.city}`;
@@ -265,13 +346,21 @@ function setTitle() {
 function route({ keepScroll = false, fromPop = false } = {}) {
   const params = new URLSearchParams(location.search);
   const listing = isListing(params);
+  const inRoom = isRoom(params);
   const home = $('[data-home]');
   const list = $('[data-listing]');
-  home.hidden = listing;
+  home.hidden = listing || inRoom;
   list.hidden = !listing;
-  document.body.classList.toggle('is-subpage', listing);
-  header.classList.toggle('is-solid', listing);
-  if (listing) {
+  roomEl.hidden = !inRoom;
+  document.body.classList.toggle('is-subpage', listing || inRoom);
+  document.body.classList.toggle('is-room', inRoom);
+  header.classList.toggle('is-solid', listing || inRoom);
+  if (!inRoom) leaveRoom();
+  if (inRoom) {
+    if (!keepScroll) window.scrollTo(0, 0);
+    setTitle();
+    enterRoom(params);
+  } else if (listing) {
     renderListing(params);
     if (!keepScroll) {
       window.scrollTo(0, 0);
@@ -292,8 +381,8 @@ function route({ keepScroll = false, fromPop = false } = {}) {
 
   const prod = params.get('produto');
   if (prod) {
-    if (!(sheet.el?.id === 'product-sheet' && $('#product-sheet .pdp__name')?.textContent === S.bySlug[prod]?.name)) openProduct(prod, { push: false });
-  } else if (sheet.el?.id === 'product-sheet') closeSheet(true, true);
+    if (!isProductOpen(prod)) openProduct(prod, { push: false });
+  } else closeProductLayers();
 
   const m = /^\/pedido\/([0-9a-f-]{36})\/?$/i.exec(location.pathname);
   if (m && trackOpenedFor !== m[1]) {
@@ -311,8 +400,10 @@ export function navigate(url, { keepScroll = false, replace = false } = {}) {
     route({ keepScroll });
     return;
   }
-  if (replace) history.replaceState({}, '', dest);
-  else history.pushState({}, '', dest);
+  // entrando no ambiente pela própria loja: o X do ambiente volta com history.back()
+  const state = isRoom(u.searchParams) ? { roomBack: 1 } : {};
+  if (replace) history.replaceState(state, '', dest);
+  else history.pushState(state, '', dest);
   closeDrawer(false);
   route({ keepScroll });
 }
@@ -387,8 +478,8 @@ async function loadStore(slug, { push = true, silent = false } = {}) {
     if (sheet.el && sheet.el.id !== 'track-sheet') closeSheet(false, true);
     closeDrawer(false);
     const params = new URLSearchParams(location.search);
-    ['produto'].forEach((k) => params.delete(k));
-    const dest = `/loja/${sf.store.slug}${isListing(params) ? `?${params}` : ''}`;
+    ['produto', 'add'].forEach((k) => params.delete(k));
+    const dest = `/loja/${sf.store.slug}${isListing(params) || isRoom(params) ? `?${params}` : ''}`;
     if (push) history.pushState({}, '', dest);
     else history.replaceState({}, '', dest);
     route();
@@ -419,6 +510,7 @@ function showBootError(err) {
 }
 
 async function boot() {
+  initMotion();
   initLayers();
   initHeader();
   initPicker();

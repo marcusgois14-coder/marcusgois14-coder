@@ -47,7 +47,7 @@ function announce(msg) {
   }
 }
 
-export function addToCart({ id, variant = null, qty = 1, open = true, checkout = false }) {
+export function addToCart({ id, variant = null, qty = 1, open = true, checkout = false, focusBack = null }) {
   const p = S.byId[id];
   if (!p) return toast('Produto não disponível nesta loja.');
   const v = variant ? p.variants.find((x) => x.id === variant) : null;
@@ -58,9 +58,16 @@ export function addToCart({ id, variant = null, qty = 1, open = true, checkout =
   saveCart();
   renderCart();
   announce(`${p.name}${v ? ` (${v.name})` : ''} adicionado ao carrinho. ${plural(cartCount(), 'item', 'itens')} no carrinho.`);
-  if (checkout) openCheckout();
-  else if (open) openDrawer('cart-drawer');
-  else toast('Adicionado ao carrinho');
+  // motion.js ouve este evento (foto voando até o carrinho) e pode pedir alguns ms em detail.delay antes de a gaveta abrir
+  const ev = { id, variant, qty, open, checkout, source: focusBack, delay: 0 };
+  document.dispatchEvent(new CustomEvent('cart-added', { detail: ev }));
+  const next = () => {
+    if (checkout) openCheckout();
+    else if (open) openDrawer('cart-drawer');
+    else toast('Adicionado ao carrinho');
+  };
+  if (ev.delay > 0) setTimeout(next, ev.delay);
+  else next();
 }
 
 function setQty(idx, qty) {

@@ -4,14 +4,18 @@
 // (w x h x d), sem escalar formas redondas. Só usa materiais e formas do kit.
 //
 // Estilos lidos de spec.style (todos opcionais; model3d.style do produto pode forçar qualquer um):
-//   cama .......... headboard 'panel'|'slats'|'upholstered'|'none', tufted, box, legs, nordic, trundle,
-//                   headboardOnly, mattressSize, bedding ('#hex' do edredom)
-//   beliche ....... triple (treliche), woodLook
-//   berço ......... drawers, wheels
+//   cama .......... headboard 'panel'|'slats'|'upholstered'|'metal'|'none', tufted, box, baseOnly, legs, nordic,
+//                   trundle, headboardOnly, mattressSize, bedding ('#hex' do edredom), provencal/retro (cama de
+//                   ferro com arco e pinhas), montessori, house (casinha), sideTables (mesas laterais acopladas).
+//                   material 'metal'|'steel' sem cabeceira estofada vira cama de ferro tubular
+//   beliche ....... triple (treliche), drawers, woodLook, material 'metal' (tubular), colors.accent (2ª cor)
+//   berço ......... drawers, wheels, portable (berço portátil/cercadinho), chest (berço com cômoda)
 //   colchão ....... pillowTop, springs, pillow (travesseiro)
 //   caixas ........ drawers, doors, niche, cane, mirror, glass, sliding, legs, retro, organic, rustic,
-//                   sideboard, wheels, marble, handle ('bar'|'dowel'|'tab'|'knob'|'cutout'|'leather_strap'|'none'),
-//                   front ('overlay'|'frame'|'rounded')
+//                   sideboard, shoeCabinet, flaps (basculante), wheels, marble, provencal, mirrored (espelhado),
+//                   changer (cômoda com trocador), open (closet aberto), maleiro, shape 'round' (criado redondo),
+//                   handle ('bar'|'dowel'|'tab'|'knob'|'cutout'|'leather_strap'|'none'), front ('overlay'|'frame'|'rounded');
+//                   guarda-roupa de aço (material 'metal'|'steel') ganha venezianas nas portas
 
 /* ================================================================== */
 /* Utilitários                                                         */
@@ -495,7 +499,8 @@ export function mattress(spec, kit, THREE) {
   }
   // cor escura/forte no nome ("Colchão ... Azul") costuma ser da faixa lateral; o tampo fica claro
   const strong = kit.luminance(C.main) < 0.5;
-  const top = strong ? '#dfe2e4' : C.main;
+  // tampo padrão (sem cor no nome): cinza bem claro de jacquard, não branco puro
+  const top = strong ? '#dfe2e4' : String(C.main).toLowerCase() === '#dfe2e4' ? '#c4c8cc' : C.main;
   const border = strong ? C.main : C.accent;
   g.add(mattressModel(kit, THREE, c, { W, H, D, pillowTop: !!st.pillowTop, top, border, step: clamp(Math.sqrt(W * D) / 90, 0.012, 0.022) }));
   return g;
@@ -630,8 +635,9 @@ function headboard(kit, THREE, c, g, { W, H, T, zb, type, body, uph, y0, s, mTop
       const yt = clamp(mTop - 0.01, y0, H - 0.25);
       const th = H - yt;
       const tOpts = { rows: Math.max(2, Math.round(th / 0.2)), depth: Math.min(0.035, T * 0.45), part: 'main' };
-      if (W > 1.75) {
-        // cabeceira larga (king): dois painéis espelhados que dividem a mesma geometria (metade do custo)
+      if (W > 1.2) {
+        // cabeceira de casal para cima: dois painéis espelhados que dividem a mesma geometria
+        // (o capitonê inteiro custa ~20 ms; a metade, ~4 ms)
         const half = kit.tufted(W / 2, th, T, uph, { ...tOpts, cols: Math.max(3, Math.round(W / 2 / 0.2)) });
         g.add(kit.place(half, { x: -W / 4, y: yt + th / 2, z: zb + T / 2 }));
         g.add(kit.place(half.clone(true), { x: W / 4, y: yt + th / 2, z: zb + T / 2, s: [-1, 1, 1] }));
@@ -773,6 +779,8 @@ function bedFrame(spec, kit, THREE, c, W, H, D) {
     hangFoot: Math.max(0.05, mTop + 0.03 - railTop + 0.01),
     maxY,
   });
+  // medidas internas para quem estende a cabeceira (cama com mesas laterais)
+  g.userData.info = { hbT, mTop, head: hasHead ? head : 'none', body, uph, s, legH };
   return g;
 }
 
@@ -788,7 +796,8 @@ function boxBed(spec, kit, THREE, c, W, H, D) {
   const hasHead = want ? H > 0.62 : H > fullSet + 0.22;
   const hbT = hasHead ? clamp(D * 0.04, 0.06, 0.1) : 0;
   const baseOnly = !!st.baseOnly; // "Base box": só a base, sem colchão
-  const pillowsUp = !hasHead && H > 0.5 && !baseOnly;
+  // sem cabeceira, travesseiros só se a altura informada comportar (senão a base fica fina demais)
+  const pillowsUp = !hasHead && H > 0.74 && !baseOnly;
   const stack = hasHead ? Math.min(baseOnly ? 0.42 : fullSet, H * 0.62) : H - (pillowsUp ? 0.12 : 0);
   const mh = baseOnly ? 0 : clamp(stack * 0.44, 0.12, 0.32);
   const feet = clamp(stack * 0.05, 0.015, 0.045);
@@ -847,6 +856,217 @@ function headboardOnly(spec, kit, THREE, c, W, H, D) {
   return g;
 }
 
+// Cama de ferro / aço / tubular: postes redondos, cabeceira e peseira de balaústres, longarinas de cantoneira.
+// Provençal/retrô: travessa de cima em arco, pinhas nos postes e um medalhão no meio.
+function metalBed(spec, kit, THREE, c, W, H, D) {
+  const { st, C, m } = c;
+  const g = kit.group('cama-ferro');
+  const met = spec.material === 'steel' ? m.metal(C.main, { finish: 'brushed' }) : m.metal(C.main, { finish: 'painted' });
+  const fancy = !!(st.provencal || st.retro);
+  const pr = clamp(W * 0.013, 0.016, 0.024); // raio dos postes
+  const sr = clamp(pr * 0.42, 0.0065, 0.009); // raio dos balaústres
+  const fin = fancy ? pr * 1.45 : 0; // pinha (bola) no topo dos postes
+  const edge = Math.max(pr, fin);
+  const px = W / 2 - edge;
+  const zH = -D / 2 + edge;
+  const zF = D / 2 - edge;
+  const mTop = clamp(H * 0.47, 0.32, 0.55);
+  const mh = clamp(mTop * 0.48, 0.14, 0.24);
+  // o colchão fica por cima da cantoneira (a longarina é fina e não o esconderia)
+  const railTop = mTop - mh + 0.012;
+  const footTop = clamp(H * 0.62, mTop + 0.08, H - 0.04);
+  const post = (x, z, top) => {
+    const h = top - 2 * fin;
+    g.add(kit.place(kit.cylinder(pr, pr, h, met, { seg: 18, part: 'main' }), { x, y: h / 2, z }));
+    if (fin) {
+      g.add(kit.place(kit.cylinder(pr * 1.15, pr * 1.15, 0.012, met, { seg: 18, part: 'main' }), { x, y: h + 0.002, z }));
+      g.add(kit.place(kit.sphere(fin, met, { seg: 18, part: 'main' }), { x, y: top - fin, z }));
+    }
+  };
+  // barra horizontal entre os postes (reta ou em arco)
+  const rail = (z, y, r, rise = 0) => {
+    const L = 2 * px;
+    if (rise <= 0.001) {
+      const t = kit.cylinder(r, r, L, met, { seg: 14, part: 'main' });
+      t.rotation.z = Math.PI / 2;
+      g.add(kit.place(t, { y, z }));
+      return () => y;
+    }
+    const pts = [];
+    for (let i = 0; i <= 12; i++) {
+      const u = i / 12;
+      pts.push([-px + L * u, y + rise * Math.sin(Math.PI * u) ** 0.9, z]);
+    }
+    g.add(kit.tube(pts, r, met, { seg: 64, radial: 10, part: 'main' }));
+    return (x) => y + rise * Math.sin(Math.PI * clamp((x + px) / L, 0, 1)) ** 0.9;
+  };
+  // grade (cabeceira/peseira): travessa de baixo, de cima e balaústres
+  const board = (z, top, low) => {
+    const yTop = top - 2 * fin - (fin ? 0.05 : pr);
+    const rise = fancy ? Math.max(0, Math.min(0.12, top - 0.02 - sr - yTop)) : 0;
+    const topY = rail(z, yTop, pr * 0.75, rise);
+    rail(z, low, pr * 0.75);
+    const mid = fancy ? low + (yTop - low) * 0.3 : null;
+    if (mid) rail(z, mid, sr * 1.1);
+    const n = Math.max(4, Math.round((2 * px) / 0.11));
+    for (let i = 1; i < n; i++) {
+      const x = -px + (2 * px * i) / n;
+      const y1 = topY(x);
+      const bh = y1 - low;
+      g.add(kit.place(kit.cylinder(sr, sr, bh, met, { seg: 10, part: 'main' }), { x, y: low + bh / 2, z }));
+    }
+    if (fancy) {
+      // medalhão central (argola) entre a travessa do meio e a de baixo
+      const rr = Math.min(0.07, (mid - low) * 0.4);
+      const ring = kit.tube(Array.from({ length: 17 }, (_, i) => [Math.cos((i / 16) * Math.PI * 2) * rr, (low + mid) / 2 + Math.sin((i / 16) * Math.PI * 2) * rr, z]), sr * 0.9, met, { seg: 40, radial: 8, closed: true, part: 'detail' });
+      g.add(ring);
+    }
+  };
+  for (const sx of [-1, 1]) {
+    post(sx * px, zH, H);
+    post(sx * px, zF, footTop);
+  }
+  board(zH, H, railTop - 0.02);
+  board(zF, footTop, railTop - 0.02);
+  // longarinas (cantoneira) e estrado
+  const rw = 0.035;
+  for (const sx of [-1, 1]) g.add(boxAt(kit, sx * (px - rw + pr * 0.4), sx * (px + pr * 0.4), railTop - 0.05, railTop, zH + pr, zF - pr, met, { r: 0.002, part: 'main', grain: 'z' }));
+  g.add(boxAt(kit, -px + rw, px - rw, railTop - 0.03, railTop - 0.012, zH + pr, zF - pr, m.wood('#d6b88f', { grain: 'smooth' }), { part: 'detail' }));
+  // ponteiras de borracha nos postes
+  for (const sx of [-1, 1]) for (const z of [zH, zF]) g.add(kit.place(kit.cylinder(pr * 1.05, pr * 1.05, 0.012, m.rubber('#1d1d1d'), { seg: 16, part: 'detail' }), { x: sx * px, y: 0.006, z }));
+  const mw = 2 * (px - rw) - 0.01;
+  const mz0 = zH + pr + 0.006;
+  const md = zF - pr - 0.01 - mz0;
+  const topY = mTop + 0.028;
+  makeBed(kit, THREE, c, g, {
+    mw,
+    md,
+    mz0,
+    mTop,
+    mh,
+    sideOut: px + pr * 0.4 - 0.004,
+    footOut: zF - pr - 0.012,
+    hangSide: Math.max(0.05, topY - railTop + 0.006),
+    hangFoot: 0.05,
+    maxY: H - 0.06,
+  });
+  return g;
+}
+
+// Cama no chão (montessoriana): moldura baixa com grade parcial; com casinha, pórticos em forma de casa
+function floorBed(spec, kit, THREE, c, W, H, D) {
+  const { st, m } = c;
+  const g = kit.group(st.house ? 'cama-casinha' : 'cama-montessoriana');
+  const body = bodyMat(c, st.woodLook ? 'oak' : 'smooth');
+  const s = clamp(W * 0.045, 0.04, 0.06); // seção da madeira
+  const slatTop = 0.07; // estrado quase no chão
+  const mh = clamp(H * 0.4, 0.12, 0.16);
+  const mTop = slatTop + mh;
+  const railTop = slatTop + mh * 0.45;
+  // estrado e laterais da moldura
+  g.add(boxAt(kit, -W / 2 + s, W / 2 - s, slatTop - 0.018, slatTop, -D / 2 + s, D / 2 - s, m.wood('#d6b88f', { grain: 'smooth' }), { part: 'detail' }));
+  for (const sx of [-1, 1]) g.add(boxAt(kit, sx * (W / 2 - s), sx * (W / 2), 0, railTop, -D / 2 + s - 0.002, D / 2 - s + 0.002, body, { r: 0.004, part: 'main', grain: 'z' }));
+  let maxY = H;
+  if (st.house) {
+    // pórticos (cabeceira e pé) em forma de casa, com cumeeira e beirais ligando os dois
+    const rise = Math.min(W / 2, H * 0.36);
+    const Hw = H - rise;
+    const k = rise / (W / 2);
+    const off = s * Math.sqrt(1 + k * k);
+    const shape = new THREE.Shape();
+    shape.moveTo(-W / 2, 0);
+    shape.lineTo(W / 2, 0);
+    shape.lineTo(W / 2, Hw);
+    shape.lineTo(0, H);
+    shape.lineTo(-W / 2, Hw);
+    shape.lineTo(-W / 2, 0);
+    const xi = W / 2 - s;
+    const yWall = H - k * xi - off;
+    const hole = new THREE.Path();
+    hole.moveTo(-xi, railTop);
+    hole.lineTo(xi, railTop);
+    hole.lineTo(xi, yWall);
+    hole.lineTo(0, H - off);
+    hole.lineTo(-xi, yWall);
+    hole.lineTo(-xi, railTop);
+    shape.holes.push(hole);
+    for (const zf of [D / 2, -D / 2 + s]) {
+      const fr = slab(kit, THREE, shape, s, body, { bevel: 0.003, grain: 'y', part: 'main' });
+      g.add(kit.place(fr, { y: 0, z: zf }));
+    }
+    // beirais (no topo das paredes) e cumeeira (losango encaixado na ponta do telhado)
+    for (const sx of [-1, 1]) g.add(boxAt(kit, sx * (W / 2 - s), sx * (W / 2), Hw - s, Hw, -D / 2 + s - 0.002, D / 2 - s + 0.002, body, { r: 0.003, part: 'main', grain: 'z' }));
+    const b = s * 0.72;
+    const ridge = kit.box(b, b, D - 2 * s + 0.004, body, { r: 0.002, part: 'main', grain: 'z' });
+    ridge.rotation.z = Math.PI / 4;
+    g.add(kit.place(ridge, { y: H - (b / Math.SQRT2) * 1.02 }));
+    maxY = Math.min(H, mTop + 0.32);
+  } else {
+    // montessoriana simples: cabeceira baixa e grade nos dois lados até metade do comprimento
+    g.add(boxAt(kit, -W / 2, W / 2, 0, H, -D / 2, -D / 2 + s, body, { r: 0.004, part: 'main', grain: 'x' }));
+    const zEnd = -D / 2 + D * 0.55;
+    for (const sx of [-1, 1]) {
+      g.add(boxAt(kit, sx * (W / 2 - s), sx * (W / 2 - s * 0.25), H - 0.035, H - 0.002, -D / 2 + s, zEnd, body, { r: 0.004, part: 'main', grain: 'z' }));
+      g.add(boxAt(kit, sx * (W / 2 - s), sx * (W / 2 - s * 0.25), railTop - 0.004, H - 0.03, zEnd - s, zEnd, body, { r: 0.004, part: 'main', grain: 'y' }));
+    }
+    // travessa do pé (baixa, para a criança subir e descer sozinha)
+    g.add(boxAt(kit, -W / 2 + s - 0.002, W / 2 - s + 0.002, 0, railTop, D / 2 - s, D / 2, body, { r: 0.004, part: 'main' }));
+    maxY = H - 0.012;
+  }
+  const mw = W - 2 * s - 0.008;
+  const mz0 = -D / 2 + s + 0.006;
+  const md = D / 2 - s - 0.006 - mz0;
+  const topY = mTop + 0.028;
+  makeBed(kit, THREE, c, g, {
+    mw,
+    md,
+    mz0,
+    mTop,
+    mh,
+    sideOut: W / 2 - 0.018,
+    footOut: D / 2 - s - 0.008,
+    hangSide: Math.max(0.04, topY - railTop - 0.004),
+    hangFoot: 0.04,
+    maxY,
+  });
+  return g;
+}
+
+// Larguras de colchão (m) para separar a cama das mesas laterais acopladas
+const MATTRESS_W = { berco: 0.6, solteiro: 0.88, solteirao: 0.96, viuva: 1.28, casal: 1.38, queen: 1.58, king: 1.93 };
+
+// Cama com mesas laterais acopladas à cabeceira (a cabeceira se estende e segura dois criados suspensos)
+function bedWithTables(spec, kit, THREE, c, W, H, D) {
+  const { st, m } = c;
+  const ms = MATTRESS_W[st.mattressSize];
+  const bw = clamp(ms ? ms + 0.12 : W * 0.62, 0.9, W - 0.6);
+  const g = kit.group('cama-com-mesas');
+  const core = bedFrame(spec, kit, THREE, c, bw, H, D);
+  g.add(core);
+  const info = core.userData.info;
+  const tw = (W - bw) / 2;
+  const tableD = clamp(D * 0.19, 0.32, 0.42);
+  const tH = 0.16;
+  const yT = clamp(info.mTop + 0.08, 0.42, H - 0.2);
+  for (const sx of [-1, 1]) {
+    const cx = sx * (bw / 2 + tw / 2);
+    const wing = kit.group('aba');
+    headboard(kit, THREE, c, wing, { W: tw, H, T: info.hbT, zb: -D / 2, type: info.head === 'none' ? 'panel' : info.head, body: info.body, uph: info.uph, y0: info.head === 'upholstered' ? Math.min(0.12, info.legH || 0) : 0, s: info.s, mTop: info.mTop, tufted: false });
+    wing.position.x = cx;
+    g.add(wing);
+    // criado suspenso: caixa com uma gaveta presa na cabeceira
+    const z0 = -D / 2 + info.hbT;
+    const x0 = cx - tw / 2 + 0.03;
+    const x1 = cx + tw / 2 - 0.03;
+    g.add(boxAt(kit, x0, x1, yT - tH, yT, z0 - 0.004, z0 + tableD, info.body, { r: 0.004, part: 'main', grain: 'x' }));
+    g.add(boxAt(kit, x0 + 0.012, x1 - 0.012, yT - tH + 0.012, yT - 0.03, z0 + tableD - 0.001, z0 + tableD + 0.0005, shadowMat(m), { part: 'detail' }));
+    g.add(boxAt(kit, x0 + 0.014, x1 - 0.014, yT - tH + 0.014, yT - 0.032, z0 + tableD - 0.002, z0 + tableD + 0.012, info.body, { r: 0.002, part: 'main', grain: 'x' }));
+    const p = makePull(kit, c, 'bar', { len: clamp((x1 - x0) * 0.35, 0.08, 0.14), mat: m.metal(c.C.metal, { finish: 'brushed' }) });
+    g.add(kit.place(p, { x: cx, y: yT - tH / 2 - 0.009, z: z0 + tableD + 0.012 }));
+  }
+  return g;
+}
+
 // Monta deitado no eixo Z; se as medidas vierem trocadas (largura > comprimento) gira 90°
 function longAxis(kit, W, D, build) {
   if (W <= D * 1.08) return build(W, D);
@@ -859,38 +1079,69 @@ export function bed(spec, kit, THREE) {
   const c = ctx(spec, kit);
   const { st, W, H, D } = c;
   if (st.headboardOnly) return headboardOnly(spec, kit, THREE, c, W, H, D);
-  return longAxis(kit, W, D, (w, d) => (st.box ? boxBed(spec, kit, THREE, c, w, H, d) : bedFrame(spec, kit, THREE, c, w, H, d)));
+  const metal = (spec.material === 'metal' || spec.material === 'steel') && (!st.headboard || st.headboard === 'metal');
+  // cama com mesas laterais: a largura inclui as mesas (não é medida trocada)
+  if (st.sideTables && !st.box && W > 1.5) {
+    const ms = MATTRESS_W[st.mattressSize];
+    if (W - clamp(ms ? ms + 0.12 : W * 0.62, 0.9, W - 0.6) >= 0.6) return bedWithTables(spec, kit, THREE, c, W, H, D);
+  }
+  return longAxis(kit, W, D, (w, d) => {
+    if (st.box) return boxBed(spec, kit, THREE, c, w, H, d);
+    if (st.house || st.montessori) return floorBed(spec, kit, THREE, c, w, H, d);
+    if (metal || st.headboard === 'metal') return metalBed(spec, kit, THREE, c, w, H, d);
+    return bedFrame(spec, kit, THREE, c, w, H, d);
+  });
 }
 
 /* ================================================================== */
 /* Beliche                                                             */
 /* ================================================================== */
 function bunkBuild(spec, kit, THREE, c, W, H, D) {
-  const { st, m } = c;
+  const { st, m, C } = c;
   const g = kit.group('beliche');
-  const body = st.woodLook ? bodyMat(c, 'oak') : bodyMat(c);
-  const s = clamp(W * 0.06, 0.045, 0.07);
-  const railH = 0.14;
-  const rt = 0.028;
+  // beliche tubular (aço/ferro): postes, grades e escada de tubo; senão, madeira/MDF
+  const metal = spec.material === 'metal' || spec.material === 'steel';
+  const body = metal ? (spec.material === 'steel' ? m.metal(C.main, { finish: 'brushed' }) : m.metal(C.main, { finish: 'painted' })) : bodyMat(c, st.woodLook ? 'oak' : undefined);
+  // segunda cor ("Branco e Rosa"): painéis das cabeceiras e guardas na cor de destaque
+  const acc = String(C.accent || '').toLowerCase();
+  const accMat = !metal && acc && acc !== '#f3f1ec' && acc !== String(C.main).toLowerCase() ? m.paint(acc, { gloss: 0.25 }) : body;
+  // peça reta entre limites: caixa na madeira, tubo redondo no metal (eixo = maior medida)
+  const piece = (x0, x1, y0, y1, z0, z1, mat = body, opts = {}) => {
+    if (!metal) return boxAt(kit, x0, x1, y0, y1, z0, z1, mat, opts);
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const dz = Math.abs(z1 - z0);
+    const L = Math.max(dx, dy, dz);
+    const r = Math.min(...[dx, dy, dz].filter((v) => v !== L).concat([L])) / 2;
+    const t = kit.cylinder(r, r, L, mat, { seg: 14, part: opts.part || 'main' });
+    if (L === dx) t.rotation.z = Math.PI / 2;
+    else if (L === dz) t.rotation.x = Math.PI / 2;
+    t.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    return t;
+  };
+  const s = metal ? clamp(W * 0.04, 0.04, 0.05) : clamp(W * 0.06, 0.045, 0.07);
+  const railH = metal ? 0.05 : 0.14;
+  const rt = metal ? 0.03 : 0.028;
   const ins = 0.006;
   // montantes
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(boxAt(kit, sx * (W / 2 - s), sx * (W / 2), 0, H, sz * (D / 2 - s), sz * (D / 2), body, { r: 0.006, part: 'main', grain: 'y' }));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(piece(sx * (W / 2 - s), sx * (W / 2), 0, H, sz * (D / 2 - s), sz * (D / 2), body, { r: 0.006, part: 'main', grain: 'y' }));
   const triple = !!st.triple;
-  const lowRail = triple ? 0.3 : 0.14;
-  const upRail = Math.max(lowRail + 0.7, H - 0.42);
+  const nDr = !triple ? clamp(Math.round(Number(st.drawers) || 0), 0, 3) : 0;
+  const lowRail = triple || nDr ? 0.3 : metal ? 0.22 : 0.14;
+  const upRail = Math.max(lowRail + railH + 0.72, H - 0.42);
   const mh = 0.13;
   const blanket = c.m.fabric(st.bedding ? kit.hexOf(st.bedding) : '#9fb3c8', { kind: 'cotton' });
   const pillowM = c.m.fabric('#f7f6f2', { kind: 'cotton' });
   const deck = (yTop, guard) => {
     const y0 = yTop - railH;
     // grades (laterais compridas e cabeceiras)
-    for (const sx of [-1, 1]) g.add(boxAt(kit, sx * (W / 2 - ins - rt), sx * (W / 2 - ins), y0, yTop, -D / 2 + s, D / 2 - s, body, { r: 0.003, part: 'main', grain: 'z' }));
-    for (const sz of [-1, 1]) g.add(boxAt(kit, -W / 2 + s, W / 2 - s, y0, yTop, sz * (D / 2 - ins - rt), sz * (D / 2 - ins), body, { r: 0.003, part: 'main' }));
-    // colchão com lençol, travesseiro e manta dobrada
+    for (const sx of [-1, 1]) g.add(piece(sx * (W / 2 - ins - rt), sx * (W / 2 - ins), y0, yTop, -D / 2 + s, D / 2 - s, body, { r: 0.003, part: 'main', grain: 'z' }));
+    for (const sz of [-1, 1]) g.add(piece(-W / 2 + s, W / 2 - s, y0, yTop, sz * (D / 2 - ins - rt), sz * (D / 2 - ins), body, { r: 0.003, part: 'main' }));
+    // colchão com lençol, travesseiro e manta dobrada (no metal, sobre uma grade de chapa)
     const mw = W - 2 * (ins + rt) - 0.01;
     const md = D - 2 * (ins + rt) - 0.01;
-    const mBot = yTop - mh * 0.55;
-    g.add(boxAt(kit, -mw / 2, mw / 2, mBot - 0.018, mBot, -md / 2, md / 2, m.wood('#d6b88f', { grain: 'smooth' }), { part: 'detail' }));
+    const mBot = metal ? y0 + 0.004 : yTop - mh * 0.55;
+    g.add(boxAt(kit, -mw / 2, mw / 2, mBot - 0.018, mBot, -md / 2, md / 2, metal ? m.metal(kit.shade(C.main, -0.1), { finish: 'painted' }) : m.wood('#d6b88f', { grain: 'smooth' }), { part: 'detail' }));
     g.add(kit.place(sheetMattress(kit, c, mw, mh, md, '#f1eee8'), { y: mBot + mh / 2 }));
     const mTop = mBot + mh;
     const room = guard ? Math.min(0.13, H - 0.01 - mTop) : 0.12;
@@ -898,9 +1149,14 @@ function bunkBuild(spec, kit, THREE, c, W, H, D) {
     g.add(kit.place(kit.box(mw - 0.02, 0.035, md * 0.32, blanket, { r: 0.012, seg: 3, part: 'detail' }), { y: mTop + 0.014, z: md / 2 - md * 0.18 }));
     return mTop;
   };
-  // ends com painel cheio entre montantes
+  // cabeceira e pé: painel cheio entre os montantes (no metal, duas travessas de tubo)
   const endPanel = (y0, y1) => {
-    for (const sz of [-1, 1]) g.add(boxAt(kit, -W / 2 + s, W / 2 - s, y0, y1, sz * (D / 2 - s * 0.5) - 0.009, sz * (D / 2 - s * 0.5) + 0.009, body, { r: 0.003, part: 'main' }));
+    for (const sz of [-1, 1]) {
+      const zc = sz * (D / 2 - s * 0.5);
+      if (metal) {
+        for (const y of [y0 + (y1 - y0) * 0.45, y1 - 0.02]) g.add(piece(-W / 2 + s, W / 2 - s, y - 0.0125, y + 0.0125, zc - 0.0125, zc + 0.0125));
+      } else g.add(boxAt(kit, -W / 2 + s, W / 2 - s, y0, y1, zc - 0.009, zc + 0.009, accMat, { r: 0.003, part: accMat === body ? 'main' : 'accent' }));
+    }
   };
   deck(lowRail + railH, false);
   endPanel(lowRail + railH, lowRail + railH + 0.22);
@@ -911,27 +1167,44 @@ function bunkBuild(spec, kit, THREE, c, W, H, D) {
   const ladW = Math.min(0.42, D * 0.24);
   const ladZ1 = D / 2 - s - 0.02;
   const ladZ0 = ladZ1 - ladW;
+  const gh = metal ? 0.0125 : 0.035;
   for (const y of [H - 0.075, upTop + (H - 0.075 - upTop) * 0.45]) {
-    g.add(boxAt(kit, -W / 2 + ins, -W / 2 + ins + rt, y - 0.035, y + 0.035, -D / 2 + s, D / 2 - s, body, { r: 0.003, part: 'main', grain: 'z' }));
-    g.add(boxAt(kit, W / 2 - ins - rt, W / 2 - ins, y - 0.035, y + 0.035, -D / 2 + s, ladZ0 - 0.02, body, { r: 0.003, part: 'main', grain: 'z' }));
+    g.add(piece(-W / 2 + ins, -W / 2 + ins + (metal ? 0.025 : rt), y - gh, y + gh, -D / 2 + s, D / 2 - s, accMat, { r: 0.003, part: 'main', grain: 'z' }));
+    g.add(piece(W / 2 - ins - (metal ? 0.025 : rt), W / 2 - ins, y - gh, y + gh, -D / 2 + s, ladZ0 - 0.02, accMat, { r: 0.003, part: 'main', grain: 'z' }));
   }
-  g.add(boxAt(kit, W / 2 - ins - rt, W / 2 - ins, upTop, H - 0.04, ladZ0 - 0.06, ladZ0 - 0.02, body, { r: 0.003, part: 'main', grain: 'y' }));
+  g.add(piece(W / 2 - ins - (metal ? 0.025 : rt), W / 2 - ins, upTop, H - 0.04, ladZ0 - 0.06, ladZ0 - 0.035, body, { r: 0.003, part: 'main', grain: 'y' }));
   // escada vertical no lado +X (perto do pé)
   const lx0 = W / 2 - 0.036;
-  for (const z of [ladZ0, ladZ1]) g.add(boxAt(kit, lx0, W / 2, 0, upTop + 0.32, z - 0.022, z + 0.022, body, { r: 0.004, part: 'main', grain: 'y' }));
+  for (const z of [ladZ0, ladZ1]) g.add(piece(lx0, W / 2, 0, upTop + 0.32, z - (metal ? 0.018 : 0.022), z + (metal ? 0.018 : 0.022), body, { r: 0.004, part: 'main', grain: 'y' }));
   for (let y = 0.3; y < upTop + 0.05; y += 0.27) {
     const rung = kit.cylinder(0.014, 0.014, ladW - 0.04, body, { seg: 14, part: 'main' });
     rung.rotation.x = Math.PI / 2;
     g.add(kit.place(rung, { x: W / 2 - 0.02, y, z: (ladZ0 + ladZ1) / 2 }));
   }
+  const pullMat = m.metal(C.metal, { finish: 'brushed' });
   // treliche: cama auxiliar embaixo (gaveta-cama)
   if (triple) {
     const tw = W - 2 * s - 0.02;
-    g.add(boxAt(kit, -tw / 2, tw / 2, 0.03, lowRail - 0.02, -D / 2 + s + 0.02, D / 2 - s - 0.02, body, { r: 0.003, part: 'main', grain: 'z' }));
+    g.add(boxAt(kit, -tw / 2, tw / 2, 0.03, lowRail - 0.02, -D / 2 + s + 0.02, D / 2 - s - 0.02, metal ? m.paint(C.main, { gloss: 0.3 }) : accMat, { r: 0.003, part: 'main', grain: 'z' }));
     for (const sz of [-1, 1]) {
-      const p = kit.handle('bar', { material: m.metal(c.C.metal, { finish: 'brushed' }), len: 0.12 });
+      const p = kit.handle('bar', { material: pullMat, len: 0.12 });
       p.rotation.y = Math.PI / 2;
       g.add(kit.place(p, { x: tw / 2, y: (lowRail + 0.01) / 2, z: sz * D * 0.25 }));
+    }
+  }
+  // gavetas embaixo da cama de baixo (frentes viradas para o lado da escada, atrás dela)
+  if (nDr) {
+    const xf = W / 2 - 0.04;
+    const z0 = -D / 2 + s + 0.012;
+    const z1 = ladZ0 - 0.03;
+    const dw = (z1 - z0) / nDr;
+    for (let i = 0; i < nDr; i++) {
+      const a = z0 + i * dw + 0.003;
+      const b = z0 + (i + 1) * dw - 0.003;
+      g.add(boxAt(kit, -W / 2 + s + 0.02, xf, 0.03, lowRail - 0.015, a, b, accMat, { r: 0.003, part: 'main', grain: 'z' }));
+      const p = kit.handle('bar', { material: pullMat, len: Math.min(0.14, dw * 0.35) });
+      p.rotation.y = Math.PI / 2;
+      g.add(kit.place(p, { x: xf, y: (lowRail + 0.015) / 2, z: (a + b) / 2 }));
     }
   }
   return g;
@@ -960,7 +1233,9 @@ function cribBuild(spec, kit, THREE, c, L, H, Wd) {
   const yPost0 = cast;
   // montantes
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(boxAt(kit, sx * (L / 2 - s), sx * (L / 2), yPost0, H, sz * (Wd / 2 - s), sz * (Wd / 2), body, { r: 0.008, part: 'main', grain: 'y' }));
-  if (wheels) for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(kit.place(caster(kit, m, cast), { x: sx * (L / 2 - s / 2), z: sz * (Wd / 2 - s / 2) }));
+  // rodízios sob os montantes (recuados o bastante para a roda não passar da medida)
+  const ci = Math.max(s / 2, cast * 0.4);
+  if (wheels) for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(kit.place(caster(kit, m, cast), { x: sx * (L / 2 - ci), z: sz * (Wd / 2 - ci) }));
   const rt = 0.03;
   // laterais compridas: travessas e grades (balaústres redondos com vão < 6,5 cm)
   for (const sz of [-1, 1]) {
@@ -1007,11 +1282,81 @@ function cribBuild(spec, kit, THREE, c, L, H, Wd) {
   g.add(kit.place(kit.cushion(mw * 0.42, 0.03, md - 0.02, m.fabric(st.bedding ? kit.hexOf(st.bedding) : '#e9d7c9', { kind: 'cotton' }), { puff: 0.3, r: 0.012, part: 'detail' }), { x: mw * 0.25, y: mTop + 0.012 }));
   return g;
 }
+// Berço portátil (cercadinho): estrutura de tubos com cantos de plástico, laterais de tela e saia de tecido
+function playard(spec, kit, THREE, c, L, H, Wd) {
+  const { C, m } = c;
+  const g = kit.group('berco-portatil');
+  const fab = m.fabric(C.main, { kind: 'cotton' });
+  const dark = kit.shade(C.main, -0.35);
+  const plast = m.plastic(kit.luminance(C.main) < 0.3 ? '#3a3a3a' : dark, { gloss: 0.35 });
+  // tela fina: painel translúcido (a trama real é fina demais para aparecer)
+  const mesh = m.glass({ tint: kit.shade(C.main, -0.45), opacity: 0.55 });
+  const cr = 0.035; // meia medida do canto de plástico
+  const tr = 0.02; // raio da barra de cima (acolchoada)
+  const footH = 0.03;
+  const skirt = clamp(H * 0.22, 0.12, 0.2);
+  // cantos: coluna de plástico do chão ao topo, com capa arredondada em cima
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const x = sx * (L / 2 - cr);
+      const z = sz * (Wd / 2 - cr);
+      g.add(kit.place(kit.box(cr * 2, 0.07, cr * 2, plast, { r: 0.012, part: 'detail' }), { x, y: H - 0.035, z }));
+      g.add(kit.place(kit.cylinder(0.014, 0.014, H - 0.07 - footH, plast, { seg: 14, part: 'detail' }), { x, y: footH + (H - 0.07 - footH) / 2, z }));
+      g.add(kit.place(kit.cylinder(0.026, 0.03, footH, m.rubber('#202020'), { seg: 16, part: 'detail' }), { x, y: footH / 2, z }));
+    }
+  }
+  // barras de cima acolchoadas (tecido) nos quatro lados
+  const yT = H - tr - 0.006;
+  for (const sz of [-1, 1]) {
+    const b = kit.cylinder(tr, tr, L - 2 * cr * 2 + 0.01, fab, { seg: 16, part: 'main' });
+    b.rotation.z = Math.PI / 2;
+    g.add(kit.place(b, { y: yT, z: sz * (Wd / 2 - cr) }));
+  }
+  for (const sx of [-1, 1]) {
+    const b = kit.cylinder(tr, tr, Wd - 2 * cr * 2 + 0.01, fab, { seg: 16, part: 'main' });
+    b.rotation.x = Math.PI / 2;
+    g.add(kit.place(b, { x: sx * (L / 2 - cr), y: yT }));
+  }
+  // laterais de tela e saia de tecido embaixo
+  const yM0 = footH + skirt;
+  const yM1 = yT - tr * 0.6;
+  for (const sz of [-1, 1]) {
+    const z = sz * (Wd / 2 - cr);
+    g.add(boxAt(kit, -L / 2 + cr, L / 2 - cr, yM0, yM1, z - 0.002, z + 0.002, mesh, { part: 'accent' }));
+    g.add(boxAt(kit, -L / 2 + cr, L / 2 - cr, footH + 0.01, yM0 + 0.01, z - 0.012, z + 0.012, fab, { r: 0.006, part: 'main' }));
+  }
+  for (const sx of [-1, 1]) {
+    const x = sx * (L / 2 - cr);
+    g.add(boxAt(kit, x - 0.002, x + 0.002, yM0, yM1, -Wd / 2 + cr, Wd / 2 - cr, mesh, { part: 'accent' }));
+    g.add(boxAt(kit, x - 0.012, x + 0.012, footH + 0.01, yM0 + 0.01, -Wd / 2 + cr, Wd / 2 - cr, fab, { r: 0.006, part: 'main' }));
+  }
+  // colchonete no fundo
+  g.add(kit.place(kit.cushion(L - 2 * cr - 0.03, 0.045, Wd - 2 * cr - 0.03, m.fabric('#f1eee8', { kind: 'cotton' }), { puff: 0.2, r: 0.012, part: 'detail' }), { y: footH + 0.07 }));
+  return g;
+}
+
+// Berço com cômoda acoplada: berço à esquerda e cômoda com trocador à direita (mesma frente)
+function cribWithChest(spec, kit, THREE, c, L, H, Wd) {
+  const g = kit.group('berco-comoda');
+  const chestW = clamp(L * 0.3, 0.42, 0.6);
+  const cribL = L - chestW;
+  const c2 = { ...c, st: { ...c.st, drawers: 0 } };
+  const cribG = cribBuild(spec, kit, THREE, c2, cribL, H, Wd);
+  cribG.position.x = -L / 2 + cribL / 2;
+  g.add(cribG);
+  const chestSpec = { ...spec, kind: 'dresser', w: chestW * 100, h: H * 100, d: Wd * 100, style: { ...c.st, drawers: clamp(Math.round(Number(c.st.drawers) || 3), 2, 4), changer: true, legs: c.st.wheels ? undefined : 'hidden', doors: 0, niche: false } };
+  const chest = dresser(chestSpec, kit, THREE);
+  chest.position.x = L / 2 - chestW / 2;
+  g.add(chest);
+  return g;
+}
+
 export function crib(spec, kit, THREE) {
   const c = ctx(spec, kit);
-  const { W, H, D } = c;
-  if (D <= W * 1.05) return cribBuild(spec, kit, THREE, c, W, H, D);
-  const inner = cribBuild(spec, kit, THREE, c, D, H, W);
+  const { st, W, H, D } = c;
+  const build = (L, Wd) => (st.portable ? playard(spec, kit, THREE, c, L, H, Wd) : st.chest && L > 1.5 ? cribWithChest(spec, kit, THREE, c, L, H, Wd) : cribBuild(spec, kit, THREE, c, L, H, Wd));
+  if (D <= W * 1.05) return build(W, D);
+  const inner = build(D, W);
   inner.rotation.y = Math.PI / 2;
   return kit.group('berco-girado', inner);
 }
@@ -1087,7 +1432,7 @@ function planFronts(kind, st, Wr, Hr) {
   if (kind === 'dresser') {
     if (st.shoeCabinet) {
       // sapateira: portas de abrir lado a lado, ou basculantes empilhadas
-      if (ndoor >= 2 && Wr > 0.5) {
+      if (ndoor >= 2 && Wr > 0.5 && !st.flaps) {
         const w = Wr / ndoor;
         for (let i = 0; i < ndoor; i++) add(i * w, (i + 1) * w, 0, Hr, 'door', { hinge: i % 2 === 0 ? 'left' : 'right' });
       } else stack(0, Wr, 0, Hr, Math.max(2, ndoor || Math.round(Hr / 0.3)), 'flap');
@@ -1144,6 +1489,14 @@ function planFronts(kind, st, Wr, Hr) {
     stack(0, Wr, 0, Hr, nd);
     return cells;
   }
+  // guarda-roupa com maleiro: fileira de portinhas no alto, o resto embaixo
+  if (st.maleiro && Hr > 1.3) {
+    const mh = clamp(Hr * 0.17, 0.28, 0.45);
+    const below = planFronts(kind, { ...st, maleiro: false }, Wr, Hr - mh);
+    const nTop = clamp(Math.ceil((ndoor || Math.round(Wr / 0.45)) / 2), 1, 4);
+    for (let i = 0; i < nTop; i++) below.push({ x0: (Wr * i) / nTop, x1: (Wr * (i + 1)) / nTop, y0: Hr - mh, y1: Hr, type: 'door', hinge: i % 2 === 0 ? 'left' : 'right', small: true });
+    return below;
+  }
   // guarda-roupa (portas de abrir)
   ndoor = clamp(ndoor || Math.round(Wr / 0.45), 1, 8);
   nd = clamp(nd, 0, 4);
@@ -1186,7 +1539,7 @@ function planFronts(kind, st, Wr, Hr) {
 }
 
 // Frente de gaveta/porta (frente em z = 0). Com palhinha: moldura + tela; espelho; vidro.
-function frontPanel(kit, THREE, c, w, h, t, mat, { cane, mirror, glass, grain, radii, topBorder = 1 } = {}) {
+function frontPanel(kit, THREE, c, w, h, t, mat, { cane, mirror, glass, grain, radii, topBorder = 1, molding = false } = {}) {
   const { m, C } = c;
   const g = kit.group('frente');
   const rounded = radii && radii.some((r) => r > 0.001);
@@ -1194,7 +1547,8 @@ function frontPanel(kit, THREE, c, w, h, t, mat, { cane, mirror, glass, grain, r
     const b = clamp(Math.min(w, h) * 0.11, 0.012, 0.045);
     const bt = b * topBorder;
     // palhinha tingida pelo tom do móvel (escura num móvel tabaco, clara num natural)
-    const tintK = c.st.woodLook ? clamp(1 - kit.luminance(C.main) * 1.4, 0.15, 0.8) : 0.06;
+    // (nas madeiras escuras a palhinha quase some no tom do móvel, como na foto do criado tabaco)
+    const tintK = c.st.woodLook ? clamp(1.25 - kit.luminance(C.main) * 1.8, 0.15, 0.9) : 0.06;
     const inner = cane ? m.cane(kit.mix(C.accent || '#d9b98a', C.main, tintK)) : m.glass({ tint: '#d6e0de', opacity: 0.32 });
     if (rounded) {
       const shape = cornerShape(THREE, w, h, radii);
@@ -1227,6 +1581,19 @@ function frontPanel(kit, THREE, c, w, h, t, mat, { cane, mirror, glass, grain, r
     const mx = clamp(w * 0.08, 0.02, 0.05);
     const my = clamp(h * 0.04, 0.03, 0.07);
     g.add(boxAt(kit, -w / 2 + mx, w / 2 - mx, -h / 2 + my, h / 2 - my, 0, 0.004, m.metal('#e9eff1', { finish: 'chrome' }), { r: 0.002, part: 'detail' }));
+  } else if (molding && w > 0.12 && h > 0.08) {
+    // provençal: moldura aplicada (retângulo em relevo) recuada da borda
+    const ins = clamp(Math.min(w, h) * 0.14, 0.022, 0.07);
+    const bw = clamp(Math.min(w, h) * 0.05, 0.008, 0.016);
+    const x0 = -w / 2 + ins;
+    const x1 = w / 2 - ins;
+    const y0 = -h / 2 + ins;
+    const y1 = h / 2 - ins;
+    const o = { r: Math.min(0.003, bw * 0.4), part: 'main' };
+    g.add(boxAt(kit, x0, x1, y1 - bw, y1, -0.001, 0.006, mat, { ...o, grain: 'x' }));
+    g.add(boxAt(kit, x0, x1, y0, y0 + bw, -0.001, 0.006, mat, { ...o, grain: 'x' }));
+    g.add(boxAt(kit, x0, x0 + bw, y0 + bw - 0.0005, y1 - bw + 0.0005, -0.001, 0.006, mat, { ...o, grain: 'y' }));
+    g.add(boxAt(kit, x1 - bw, x1, y0 + bw - 0.0005, y1 - bw + 0.0005, -0.001, 0.006, mat, { ...o, grain: 'y' }));
   }
   return g;
 }
@@ -1237,23 +1604,28 @@ function caseFurniture(spec, kit, THREE, kind) {
   const g = kit.group(kind);
   const wardrobe = kind === 'wardrobe';
   // folheado: veio discreto nos claros; nos escuros o 'oak' (mais fosco) evita brilhos pontilhados
-  const body = bodyMat(c, st.rustic ? 'rustic' : kit.luminance(C.main) < 0.3 ? 'oak' : 'smooth');
+  const prov = !!st.provencal;
+  const mirrored = !!st.mirrored && !wardrobe;
+  const steel = wardrobe && (spec.material === 'metal' || spec.material === 'steel');
+  // espelhado: casco e frentes revestidos de espelho
+  const mirrorMat = m.metal('#e4eaec', { finish: 'chrome' });
+  const body = mirrored ? mirrorMat : bodyMat(c, st.rustic ? 'rustic' : kit.luminance(C.main) < 0.3 ? 'oak' : 'smooth');
   // duas cores ("Freijó e Off White", "Branco e Freijó"): frentes na segunda cor
   const DEF_ACC = { nightstand: '#d9b98a', dresser: '#d9b98a', wardrobe: '#c8995e' };
   const acc = String(spec.colors?.accent || '').toLowerCase();
   const wd = String(spec.colors?.wood || '').toLowerCase();
   let frontMat = body;
-  if (st.twoTone !== false && !st.cane) {
+  if (st.twoTone !== false && !st.cane && !mirrored) {
     if (acc && acc !== DEF_ACC[kind]) frontMat = m.paint(acc, { gloss: 0.2 });
     else if (!st.woodLook && wd && wd !== '#c8995e') frontMat = m.wood(wd, { grain: 'smooth' });
   }
   // jeito de construir: arredondado (retrô, pés palito), quadro com frentes embutidas (palhinha, rústico) ou sobreposto
-  const look = st.front || (!wardrobe && (st.legs === 'palito' || st.retro || st.organic) ? 'rounded' : !wardrobe && (st.cane || st.rustic) ? 'frame' : 'overlay');
+  const look = st.front || (prov || mirrored ? 'overlay' : !wardrobe && (st.legs === 'palito' || st.retro || st.organic) ? 'rounded' : !wardrobe && (st.cane || st.rustic) ? 'frame' : 'overlay');
   const legType =
     st.wallMount && !wardrobe ? 'none'
     : st.legs === 'palito' || (st.retro && !st.legs) ? 'palito'
     : st.legs === 'metal' ? 'metal_square'
-    : st.legs === 'turned' ? 'turned'
+    : st.legs === 'turned' || (prov && !st.legs) ? 'turned'
     : st.legs === 'hidden' || st.legs === 'wood_base' ? 'plinth'
     : st.wheels ? 'wheels'
     : look === 'frame' ? 'stile'
@@ -1270,14 +1642,15 @@ function caseFurniture(spec, kit, THREE, kind) {
     wheels: clamp(H * 0.1, 0.045, 0.07),
     none: 0,
   }[legType];
-  const handleType = st.handle || (look === 'rounded' ? 'dowel' : st.cane ? 'tab' : st.retro && !wardrobe ? 'knob' : 'bar');
+  const handleType = st.handle || (look === 'rounded' ? 'dowel' : st.cane ? 'tab' : (st.retro && !wardrobe) || prov || mirrored ? 'knob' : 'bar');
   const pullMat = handleType === 'dowel' ? woodOf(c) : handleType === 'tab' ? (st.woodLook ? m.wood(kit.shade(C.main, -0.2), { grain: 'oak', relief: 0.35 }) : body) : m.metal(C.metal || '#b8a16a', { finish: 'brushed' });
   // saliência do puxador (para caber na profundidade)
   const sample = makePull(kit, c, handleType, { len: 0.1, mat: pullMat });
   const hp = wardrobe && st.sliding ? 0.008 : sample ? Math.max(0, bounds(kit, sample).max.z) : 0;
   const ft = 0.018; // espessura das frentes
   const gap = 0.003;
-  const legMat = legType === 'metal_square' ? m.metal(C.metal && kit.luminance(C.metal) < 0.4 ? C.metal : '#1f1f1f', { finish: 'painted' }) : st.woodLook ? body : m.wood(C.wood, { grain: 'oak' });
+  // provençal pintado: pés torneados na mesma cor do móvel
+  const legMat = legType === 'metal_square' ? m.metal(C.metal && kit.luminance(C.metal) < 0.4 ? C.metal : '#1f1f1f', { finish: 'painted' }) : st.woodLook || (prov && !mirrored) ? body : m.wood(C.wood, { grain: 'oak' });
   const legPart = legType === 'metal_square' ? 'metal' : st.woodLook ? 'main' : 'wood';
 
   let region; // { x0, x1, y0, y1, zFace }
@@ -1336,15 +1709,21 @@ function caseFurniture(spec, kit, THREE, kind) {
     rails = { t: clamp(s * 0.75, 0.014, 0.028), z0: zFF - s * 0.9, z1: zFF };
   } else {
     // sobreposto: caixa com laterais, tampo (com beiral em cômodas/criados) e frentes por cima
-    const topOv = wardrobe ? 0 : 0.008;
-    const tt = wardrobe ? 0 : clamp(H * 0.035, 0.018, 0.03);
+    // provençal: tampo/cornija em degrau, saliente (também no guarda-roupa)
+    const topOv = prov ? (wardrobe ? 0.02 : 0.012) : wardrobe ? 0 : 0.008;
+    const tt = prov ? clamp(H * 0.035, 0.024, 0.06) : wardrobe ? 0 : clamp(H * 0.035, 0.018, 0.03);
     const zFace = D / 2 - Math.max(hp, topOv);
     const zC = zFace - ft - 0.002;
     const Wc = W - 2 * topOv;
     const ts = 0.018;
     const yTopC = H - tt;
     const y0C = legH;
-    if (tt > 0) {
+    if (tt > 0 && prov) {
+      // cornija em dois degraus (o de cima mais saliente)
+      const t1 = tt * 0.55;
+      g.add(boxAt(kit, -W / 2, W / 2, H - t1, H, -D / 2, zFace + topOv, body, { r: 0.004, part: 'main' }));
+      g.add(boxAt(kit, -W / 2 + topOv * 0.5, W / 2 - topOv * 0.5, H - tt, H - t1 + 0.001, -D / 2, zFace + topOv * 0.5, body, { r: 0.003, part: 'main' }));
+    } else if (tt > 0) {
       const topMat = st.marble || spec.material === 'marble' ? m.marble('#efede8') : body;
       g.add(boxAt(kit, -W / 2, W / 2, H - tt, H, -D / 2, zFace + topOv, topMat, { r: 0.004, part: topMat === body ? 'main' : 'accent' }));
     }
@@ -1352,11 +1731,11 @@ function caseFurniture(spec, kit, THREE, kind) {
     g.add(boxAt(kit, -Wc / 2 + ts, Wc / 2 - ts, yTopC - ts, yTopC, -D / 2, zC, body, { part: 'main' }));
     g.add(boxAt(kit, -Wc / 2 + ts, Wc / 2 - ts, y0C, y0C + ts, -D / 2, zC, body, { part: 'main' }));
     g.add(boxAt(kit, -Wc / 2 + ts, Wc / 2 - ts, y0C + ts, yTopC - ts, -D / 2 + 0.002, -D / 2 + 0.01, body, { part: 'main' }));
-    region = { x0: -Wc / 2 + 0.0015, x1: Wc / 2 - 0.0015, y0: y0C + (legType === 'plinth' ? 0.0015 : 0.0015), y1: yTopC - (wardrobe ? 0.0015 : 0.0015), zFace, zC, ts };
+    region = { x0: -Wc / 2 + 0.0015, x1: Wc / 2 - 0.0015, y0: y0C + 0.0015, y1: yTopC - 0.0015, zFace, zC, ts, Wc };
   }
 
   // pés / rodapé
-  const bw = look === 'frame' ? W - 0.012 : W - (look === 'overlay' && !wardrobe ? 0.016 : 0);
+  const bw = look === 'frame' ? W - 0.012 : region.Wc ?? W;
   if (legType === 'palito') {
     legs4(kit, g, 'palito', { hx: bw / 2 - clamp(W * 0.075, 0.04, 0.1), hz: D / 2 - clamp(D * 0.17, 0.05, 0.09), cz: -hp / 2, h: legH + 0.004, r: clamp(W * 0.02, 0.016, 0.026), mat: legMat, splay: 0.36, dirZ: 0.45, part: legPart });
   } else if (legType === 'metal_square' || legType === 'turned' || legType === 'square') {
@@ -1435,7 +1814,7 @@ function caseFurniture(spec, kit, THREE, kind) {
     }
     const isDrawer = cell.type === 'drawer' || cell.type === 'flap';
     const tabTop = handleType === 'tab' && isDrawer ? 1.9 : 1;
-    const panel = frontPanel(kit, THREE, c, w, h, ft, frontMat, { cane: !!st.cane && cell.type !== 'mirror', mirror: cell.type === 'mirror', glass: cell.type === 'glass', grain: grainFront, radii, topBorder: tabTop });
+    const panel = frontPanel(kit, THREE, c, w, h, ft, frontMat, { cane: !!st.cane && cell.type !== 'mirror', mirror: cell.type === 'mirror', glass: cell.type === 'glass', grain: grainFront, radii, topBorder: tabTop, molding: prov && !st.cane });
     g.add(kit.place(panel, { x: cx, y: cy, z: region.zFace }));
     // puxadores
     const zP = region.zFace;
@@ -1459,11 +1838,169 @@ function caseFurniture(spec, kit, THREE, kind) {
       const len = handleType === 'knob' ? 0.02 : tall ? clamp(h * 0.2, 0.2, 0.45) : clamp(h * 0.3, 0.08, 0.18);
       const vertical = handleType !== 'knob' && handleType !== 'tab';
       const p = makePull(kit, c, handleType === 'tab' ? 'bar' : handleType, { len, vertical, mat: handleType === 'tab' ? m.metal(C.metal, { finish: 'brushed' }) : pullMat });
-      const yy = tall ? Math.min(y1 - len / 2 - 0.05, Math.max(cy, 1.05)) : cy + h * 0.25;
+      // portas altas: todos os puxadores na mesma altura (~1,05 m), mesmo nas portas acima das gavetas
+      const yy = tall ? clamp(1.05, y0 + len / 2 + 0.06, y1 - len / 2 - 0.05) : cell.small ? cy - h * 0.28 : cy + h * 0.25;
       if (p) g.add(kit.place(p, { x: cx + edge * (w / 2 - 0.035), y: yy, z: zP }));
+      if (steel && h > 0.5) {
+        // roupeiro de aço: venezianas estampadas em cima e embaixo de cada porta
+        const sw = Math.min(w * 0.55, 0.3);
+        for (const top of [cy + h / 2 - 0.07, cy - h / 2 + 0.07 + 5 * 0.02]) {
+          for (let k = 0; k < 6; k++) {
+            const ys = top - k * 0.02;
+            g.add(boxAt(kit, cx - sw / 2, cx + sw / 2, ys - 0.0045, ys, zP - 0.001, zP + 0.0015, shadow, { part: 'detail' }));
+            g.add(boxAt(kit, cx - sw / 2, cx + sw / 2, ys, ys + 0.006, zP - 0.001, zP + 0.004, frontMat, { r: 0.0015, part: 'main' }));
+          }
+        }
+      }
     }
   }
   return g;
+}
+
+// Closet aberto: vãos com cabideiro (e roupas penduradas), prateleiras e gavetas embaixo, sem portas
+function openCloset(spec, kit, THREE) {
+  const c = ctx(spec, kit);
+  const { st, C, m, W, H, D } = c;
+  const g = kit.group('closet');
+  const body = bodyMat(c, kit.luminance(C.main) < 0.3 ? 'oak' : 'smooth');
+  const inner = m.paint(kit.shade(C.main, -0.08), { gloss: 0.15 });
+  const t = 0.018;
+  const plinth = clamp(H * 0.04, 0.05, 0.08);
+  const nb = clamp(Math.round(W / 0.6), 1, 5); // vãos
+  const bwid = (W - (nb + 1) * t) / nb;
+  // laterais, divisórias, tampo, rodapé e fundo
+  for (let i = 0; i <= nb; i++) {
+    const x0 = -W / 2 + i * (bwid + t);
+    g.add(boxAt(kit, x0, x0 + t, 0, H - t + 0.001, -D / 2, D / 2, body, { r: 0.0015, part: 'main', grain: 'y' }));
+  }
+  g.add(boxAt(kit, -W / 2, W / 2, H - t, H, -D / 2, D / 2, body, { r: 0.002, part: 'main' }));
+  g.add(boxAt(kit, -W / 2 + t, W / 2 - t, 0, plinth, -D / 2 + 0.02, D / 2 - 0.03, body, { part: 'main' }));
+  g.add(boxAt(kit, -W / 2 + t, W / 2 - t, plinth, H - t, -D / 2, -D / 2 + 0.008, inner, { part: 'detail' }));
+  const nd = clamp(Math.round(Number(st.drawers) || 0), 0, 4);
+  const rod = m.metal('#c9cbcd', { finish: 'chrome' });
+  const shelfAt = (x0, x1, y) => g.add(boxAt(kit, x0, x1, y - t, y, -D / 2 + 0.008, D / 2 - 0.01, body, { r: 0.0015, part: 'main' }));
+  const r = kit.rng(String(spec.seed || 'closet'));
+  const clothes = ['#3d4a5c', '#c9c2b5', '#7a2f35', '#e8e4dc', '#55624a', '#2b2b2e', '#b48a5a', '#8a9bb0'];
+  for (let i = 0; i < nb; i++) {
+    const x0 = -W / 2 + t + i * (bwid + t);
+    const x1 = x0 + bwid;
+    const cx = (x0 + x1) / 2;
+    const hanging = nb === 1 || i % 2 === 0 || i === nb - 1;
+    if (hanging) {
+      // prateleira alta + cabideiro; gavetas embaixo no vão do meio
+      const yShelf = H - t - clamp(H * 0.12, 0.22, 0.3);
+      shelfAt(x0, x1, yShelf);
+      const yRod = yShelf - 0.07;
+      const tubeR = 0.0125;
+      const rodM = kit.cylinder(tubeR, tubeR, bwid, rod, { seg: 14, part: 'metal' });
+      rodM.rotation.z = Math.PI / 2;
+      g.add(kit.place(rodM, { x: cx, y: yRod }));
+      let yBottom = plinth;
+      if (nd && i === Math.floor((nb - 1) / 2)) {
+        const dh = 0.18;
+        for (let k = 0; k < nd; k++) {
+          const y0 = plinth + k * dh;
+          g.add(boxAt(kit, x0 + 0.002, x1 - 0.002, y0 + 0.002, y0 + dh - 0.002, D / 2 - 0.03, D / 2 - 0.012, body, { r: 0.0015, part: 'main', grain: 'x' }));
+          g.add(kit.place(makePull(kit, c, 'bar', { len: clamp(bwid * 0.3, 0.08, 0.16), mat: m.metal(C.metal, { finish: 'brushed' }) }), { x: cx, y: y0 + dh * 0.55, z: D / 2 - 0.012 - 0.022 }));
+        }
+        yBottom = plinth + nd * dh;
+        shelfAt(x0, x1, yBottom + t);
+      }
+      // roupas penduradas (cabide + peça), viradas de lado como num closet de verdade
+      const n = Math.max(2, Math.floor(bwid / 0.07));
+      for (let k = 0; k < n; k++) {
+        if (r() < 0.25) continue;
+        const x = x0 + 0.04 + ((bwid - 0.08) * (k + 0.5)) / n;
+        const len = Math.min(yRod - yBottom - 0.12, 0.55 + r() * 0.5);
+        const gw = Math.min(D - 0.1, 0.44);
+        const piece = kit.box(0.022, len, gw, m.fabric(clothes[Math.floor(r() * clothes.length)], { kind: 'cotton' }), { r: 0.008, seg: 2, part: 'detail' });
+        g.add(kit.place(piece, { x, y: yRod - 0.06 - len / 2, z: 0 }));
+        const hook = kit.box(0.006, 0.05, gw * 0.85, m.plastic('#2a2a2a', { gloss: 0.3 }), { r: 0.002, part: 'detail' });
+        g.add(kit.place(hook, { x, y: yRod - 0.035, z: 0 }));
+      }
+    } else {
+      // vão de prateleiras com roupas dobradas
+      const ns = Math.max(3, Math.round((H - plinth) / 0.35));
+      const step = (H - t - plinth) / ns;
+      for (let k = 1; k < ns; k++) shelfAt(x0, x1, plinth + k * step);
+      for (let k = 0; k < ns; k++) {
+        const y = plinth + k * step + (k ? 0 : 0.002);
+        const stackH = Math.min(step * 0.5, 0.12 + r() * 0.08);
+        const fw = Math.min(bwid * 0.8, 0.38);
+        g.add(boxAt(kit, -fw / 2 + cx, fw / 2 + cx, y + 0.001, y + stackH, -D / 2 + 0.06, D / 2 - 0.08, m.fabric(clothes[Math.floor(r() * clothes.length)], { kind: 'cotton' }), { r: 0.012, part: 'detail' }));
+      }
+    }
+  }
+  return g;
+}
+
+// Criado-mudo redondo: corpo cilíndrico (elíptico se w ≠ d), gavetas em faixas, pés de metal ou palito
+function roundNightstand(spec, kit, THREE) {
+  const c = ctx(spec, kit);
+  const { st, C, m, W, H, D } = c;
+  const g = kit.group('criado-redondo');
+  const body = bodyMat(c, kit.luminance(C.main) < 0.3 ? 'oak' : 'smooth');
+  const legT = st.legs === 'palito' ? 'palito' : st.legs === 'turned' ? 'turned' : st.legs === 'wood' ? 'tapered' : 'metal_square';
+  const legH = clamp(H * 0.24, 0.1, 0.2);
+  const topT = 0.025;
+  const ell = (rx, rz) => {
+    const sh = new THREE.Shape();
+    sh.absellipse(0, 0, rx, rz, 0, Math.PI * 2, false, 0);
+    return sh;
+  };
+  // disco horizontal (elíptico) de y0 a y1
+  const disk = (rx, rz, y0, y1, mat, part = 'main') => {
+    const d = slab(kit, THREE, ell(rx, rz), y1 - y0, mat, { bevel: Math.min(0.004, (y1 - y0) / 4), part, curveSegments: 40 });
+    // slab: frente em z = 0 e fundo em z = -t; girado -90° em X, a espessura vai de y1 - t a y1
+    d.rotation.x = -Math.PI / 2;
+    d.position.y = y1;
+    return d;
+  };
+  const rx = W / 2;
+  const rz = D / 2;
+  const bodyR = 0.026; // corpo recuado do tampo: o puxador não passa da medida
+  g.add(disk(rx, rz, H - topT, H, body));
+  const yb0 = legH;
+  const yb1 = H - topT;
+  const nd = clamp(Math.round(Number(st.drawers) || 1), 1, 3);
+  const bandH = Math.min(0.15, (yb1 - yb0) / (nd + (st.niche ? 1.2 : 0.6)));
+  const shadow = shadowMat(m);
+  // corpo de baixo (fechado ou nicho) e as faixas das gavetas separadas por frisos escuros
+  const yD = yb1 - nd * bandH;
+  g.add(disk(rx - bodyR, rz - bodyR, yb0, yD - 0.003, body));
+  for (let k = 0; k < nd; k++) {
+    const y0 = yD + k * bandH;
+    g.add(disk(rx - bodyR - 0.004, rz - bodyR - 0.004, y0 - 0.004, y0 + 0.001, shadow, 'detail'));
+    g.add(disk(rx - bodyR, rz - bodyR, y0 + 0.001, y0 + bandH - 0.003, body));
+    const knob = kit.handle('knob', { material: m.metal(C.metal, { finish: 'brushed' }), size: 0.01, part: 'metal' });
+    g.add(kit.place(knob, { y: y0 + bandH / 2, z: rz - bodyR - 0.001 }));
+  }
+  g.add(disk(rx - bodyR - 0.004, rz - bodyR - 0.004, yb1 - 0.004, yb1 + 0.001, shadow, 'detail'));
+  // pés
+  const lm = legT === 'metal_square' ? m.metal(C.metal && kit.luminance(C.metal) < 0.4 ? C.metal : '#1f1f1f', { finish: 'painted' }) : woodOf(c);
+  for (const a of [0.25, 0.75, 1.25, 1.75]) {
+    const L = kit.leg(legT, { h: legH + 0.004, r: 0.014, material: lm, dir: [Math.cos(a * Math.PI), Math.sin(a * Math.PI)], splay: legT === 'palito' ? 0.25 : 0, part: legT === 'metal_square' ? 'metal' : 'wood' });
+    g.add(kit.place(L, { x: Math.cos(a * Math.PI) * (rx - 0.07), z: Math.sin(a * Math.PI) * (rz - 0.07) }));
+  }
+  return g;
+}
+
+// Cômoda com trocador: tampo vira uma bandeja com bordas baixas e colchonete (atrás dos puxadores)
+function changerTop(kit, c, g, W, D, y0, H) {
+  const { m, C } = c;
+  const body = bodyMat(c);
+  const t = 0.016;
+  const h = H - y0;
+  const z0 = -D / 2;
+  const z1 = D / 2 - 0.028; // alinhado com o tampo, sem passar dos puxadores
+  g.add(boxAt(kit, -W / 2, W / 2, y0 - 0.002, y0 + 0.018, z0, z1, body, { r: 0.003, part: 'main' }));
+  g.add(boxAt(kit, -W / 2, W / 2, y0, H, z0, z0 + t, body, { r: 0.003, part: 'main' }));
+  for (const sx of [-1, 1]) g.add(boxAt(kit, sx * (W / 2 - t), sx * (W / 2), y0, H, z0 + t - 0.001, z1, body, { r: 0.003, part: 'main', grain: 'z' }));
+  g.add(boxAt(kit, -W / 2 + t - 0.001, W / 2 - t + 0.001, y0, y0 + h * 0.55, z1 - t, z1, body, { r: 0.003, part: 'main' }));
+  // colchonete do trocador (tecido claro; azulado quando o móvel é branco)
+  const padH = Math.min(0.06, h * 0.6);
+  const padColor = kit.luminance(C.main) > 0.8 ? '#cfe0e6' : '#f1ede6';
+  g.add(kit.place(kit.cushion(W - 2 * t - 0.012, padH, z1 - z0 - 2 * t - 0.012, m.fabric(padColor, { kind: 'cotton' }), { puff: 0.3, r: Math.min(0.025, padH * 0.4), part: 'accent' }), { y: y0 + 0.018 + padH / 2, z: (z0 + z1) / 2 }));
 }
 
 // Portas de correr: 2-4 painéis em trilhos alternados, perfil vertical como puxador
@@ -1493,11 +2030,23 @@ function slidingDoors(kit, THREE, c, g, region, { body, ft }) {
 }
 
 export function nightstand(spec, kit, THREE) {
+  const st = spec.style || {};
+  if (st.shape === 'round' || st.shape === 'oval') return roundNightstand(spec, kit, THREE);
   return caseFurniture(spec, kit, THREE, 'nightstand');
 }
 export function dresser(spec, kit, THREE) {
+  const st = spec.style || {};
+  if (st.changer && !st.sideboard && !st.shoeCabinet) {
+    // cômoda com trocador: a caixa fica mais baixa e o trocador ocupa o topo até a altura total
+    const trayCm = clamp(spec.h * 0.13, 9, 14);
+    const g = caseFurniture({ ...spec, h: spec.h - trayCm }, kit, THREE, 'dresser');
+    const c = ctx(spec, kit);
+    changerTop(kit, c, g, c.W, c.D, c.H - kit.cm(trayCm), c.H);
+    return g;
+  }
   return caseFurniture(spec, kit, THREE, 'dresser');
 }
 export function wardrobe(spec, kit, THREE) {
+  if (spec.style?.open) return openCloset(spec, kit, THREE);
   return caseFurniture(spec, kit, THREE, 'wardrobe');
 }

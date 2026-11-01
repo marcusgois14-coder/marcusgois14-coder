@@ -159,7 +159,10 @@ function planSlab(c, ptsXZ, radii, thickness, material, { bevel = 0.004, part } 
 // bulge (m) estufa as faces laterais (±a) no meio da altura, como estofado cheio.
 // R (opcional) dobra a seção ao longo de 'a' em arco com centro em o + b*R.
 // segA subdivide as faces longas ao longo de 'a' (necessário quando a seção é dobrada com R).
-function loft(c, stations, material, { cs = 5, part, segA = 0 } = {}) {
+// vFrom: onde o 'v' da textura começa em cada anel. 'start' (canto inicial), 'bottom' (centro da face b0,
+// crescendo pelos dois lados) ou 'top' (centro da face b1, a face vista). Ancorar onde a seção não muda
+// evita que a trama "escorra" quando a altura/largura do anel varia ao longo do loft.
+function loft(c, stations, material, { cs = 5, part, segA = 0, vFrom = 'start' } = {}) {
   const { THREE, kit } = c;
   const n = stations.length;
   const M = 4 * (cs + 1) + 2 * segA + 1;
@@ -190,11 +193,24 @@ function loft(c, stations, material, { cs = 5, part, segA = 0 } = {}) {
       }
     });
     ring.push(ring[0], ring[1]);
+    // perímetro e posição (em v) do centro da face de cima/de baixo
+    let per = 0;
+    for (let j = 1; j < M; j++) per += Math.hypot(ring[2 * j] - ring[2 * j - 2], ring[2 * j + 1] - ring[2 * j - 1]);
+    const arc = cs * 2 * r * Math.sin(Math.PI / (4 * cs));
+    const ac = (s.a0 + s.a1) / 2;
+    const vRef = vFrom === 'bottom' ? per - (s.a1 - r - ac) : vFrom === 'top' ? 2 * arc + (s.b1 - s.b0 - 2 * r) + (s.a1 - r - ac) : 0;
     let v = 0;
     for (let j = 0; j < M; j++) {
       const pa = ring[2 * j];
       const pb = ring[2 * j + 1];
       if (j) v += Math.hypot(pa - ring[2 * j - 2], pb - ring[2 * j - 1]);
+      let vv = v;
+      if (vFrom !== 'start') {
+        const dv = (((v - vRef) % per) + per) % per;
+        // 'bottom': espelha (sobe igual pelos dois lados; a emenda fica na crista de cima, arredondada)
+        // 'top': contínuo a partir do centro da frente (sem espelho, que inverteria o relevo); emenda atrás
+        vv = vFrom === 'bottom' ? Math.min(dv, per - dv) : dv > per / 2 ? dv - per : dv;
+      }
       let ka = pa;
       let kb = pb;
       if (s.bulge) ka += Math.sign(pa) * s.bulge * Math.sin((Math.PI * (pb - s.b0)) / (s.b1 - s.b0 || 1));
@@ -210,7 +226,7 @@ function loft(c, stations, material, { cs = 5, part, segA = 0 } = {}) {
       P[q + 2] = s.o.z + s.a.z * ka + s.b.z * kb;
       const w = (i * M + j) * 2;
       UV[w] = s.u / tu;
-      UV[w + 1] = v / tv;
+      UV[w + 1] = vv / tv;
     }
   }
   // orientação dos triângulos (normais para fora)
@@ -371,7 +387,7 @@ function shell(c, path, o, material) {
       st.push(station(s1, (T(s1) / 2) * Math.sin(t), Math.cos(t), (T(s1) / 2) * t));
     }
   }
-  return loft(c, st, material, { cs: 5 });
+  return loft(c, st, material, { cs: 5, vFrom: 'bottom' });
 }
 
 // kit.tube reconhece curvas pela flag isCurve (o three.js r170 não define): marcamos aqui
@@ -504,7 +520,8 @@ function softBoxGeo(c, w, h, d, { r = 0.03, puff = 0.12, side = 0.25, step = 0.0
 // Almofada macia (equivalente ao kit.cushion, mais rápida)
 function soft(c, w, h, d, material, { puff = 0.14, r, side = 0.25, part, grain, step } = {}) {
   const rad = r ?? Math.min(h, w, d) * 0.32;
-  const geo = softBoxGeo(c, w, h, d, { r: rad, puff, side, step: step ?? Math.max(0.035, Math.min(w, d) / 14) });
+  // ~12 divisões no lado menor (mín. 4 cm) bastam para o estufado; sofás grandes ficam no orçamento de tempo
+  const geo = softBoxGeo(c, w, h, d, { r: rad, puff, side, step: step ?? Math.max(0.04, Math.min(w, d) / 12) });
   return c.kit.mesh(geo, material, { part, grain: grain || (w >= d ? 'x' : 'z') });
 }
 
@@ -583,10 +600,73 @@ function tuftedFast(c, w, h, d, material, { rows = 3, cols, depth, button = 0.00
       const b = kit.sphere(button, bm, { seg: 8, part: part || 'detail' });
       b.scale.z = 0.6;
       b.position.set(x, y, d / 2 - relief + relief * hAt(x, y) + button * 0.2);
+      b.userData.btn = true;
       g.add(b);
     }
   }
   return g;
+}
+
+// Curva um painel (tuftedFast, frente +Z, centrado) para acompanhar o contorno interno de uma casca:
+// reto até |x| = xf e, depois, arco de raio Rb dobrando para a frente (cantos do encosto).
+// Geometrias são clonadas (as dos botões são compartilhadas: só a posição deles muda).
+function bendPanel(c, panel, { xf, Rb, d }) {
+  const frame = (x) => {
+    const ax = Math.abs(x);
+    const sg = Math.sign(x) || 1;
+    if (ax <= xf) return { px: x, pz: 0, phi: 0, sg };
+    const phi = (ax - xf) / Rb;
+    return { px: sg * (xf + Rb * Math.sin(phi)), pz: Rb * (1 - Math.cos(phi)), phi, sg };
+  };
+  // ponto local (x, z medido a partir da face de trás) -> ponto curvado
+  const map = (x, z) => {
+    const f = frame(x);
+    return [f.px - f.sg * Math.sin(f.phi) * z, f.pz + Math.cos(f.phi) * z, f];
+  };
+  for (const ch of panel.children) {
+    if (!ch.isMesh) continue;
+    if (ch.userData.btn) {
+      const [x, z, f] = map(ch.position.x, ch.position.z + d / 2);
+      ch.position.x = x;
+      ch.position.z = z - d / 2;
+      ch.rotation.y = f.sg * -f.phi;
+      continue;
+    }
+    // a placa de trás (caixa arredondada) não tem vértices no meio da largura: troca por caixa subdividida
+    if (ch.geometry.type === 'BoxGeometry') {
+      ch.geometry.computeBoundingBox();
+      const bb = ch.geometry.boundingBox;
+      const sz = bb.getSize(new c.THREE.Vector3());
+      const ct = bb.getCenter(new c.THREE.Vector3());
+      const box = new c.THREE.BoxGeometry(sz.x, sz.y, sz.z, Math.max(8, Math.ceil(sz.x / 0.012)), 1, 1).translate(ct.x, ct.y, ct.z);
+      ch.geometry = c.kit.mesh(box, ch.material, { grain: 'x' }).geometry;
+    }
+    ch.updateMatrix();
+    const geo = ch.geometry.clone();
+    geo.applyMatrix4(ch.matrix);
+    ch.position.set(0, 0, 0);
+    ch.rotation.set(0, 0, 0);
+    ch.scale.set(1, 1, 1);
+    const P = geo.attributes.position;
+    const N = geo.attributes.normal;
+    for (let i = 0; i < P.count; i++) {
+      const [x, z, f] = map(P.getX(i), P.getZ(i) + d / 2);
+      P.setXYZ(i, x, P.getY(i), z - d / 2);
+      if (N && f.phi) {
+        const cs = Math.cos(f.phi);
+        const sn = Math.sin(f.phi) * f.sg;
+        const nx = N.getX(i);
+        const nz = N.getZ(i);
+        N.setXYZ(i, nx * cs - nz * sn, N.getY(i), nx * sn + nz * cs);
+      }
+    }
+    P.needsUpdate = true;
+    if (N) N.needsUpdate = true;
+    geo.computeBoundingBox();
+    geo.computeBoundingSphere();
+    ch.geometry = geo;
+  }
+  return panel;
 }
 
 /* ================================================================== */
@@ -633,7 +713,7 @@ function addLegs(c, g, L, Dd, ls) {
   const spread = ls.type === 'palito' ? h * Math.tan(ls.splay || 0) : 0;
   const ins = ls.inset ?? (ls.type === 'bun' ? 0.06 : ls.type === 'block' ? 0.07 : Math.max(0.05, spread + ls.r + 0.03));
   const xs = L / 2 - ins;
-  const zs = Dd / 2 - ins;
+  const zs = Dd / 2 - (ls.insetZ ?? ins);
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
     const x = sx * xs;
     const z = sz * zs;
@@ -742,7 +822,13 @@ function sofaRun(c, o) {
   const Li = x1 - x0;
   const ov = 0.015;
 
-  addLegs(c, g, L, Dd, ls);
+  // braço confort alarga para cima: as sapatas vão sob a base do braço, não para fora dela
+  let feet = ls;
+  if (o.armStyle === 'pillow' && ls.type === 'block' && o.armW > 0 && (o.armL || o.armR)) {
+    const aw = o.armW;
+    feet = { ...ls, inset: clamp(aw * 0.12, 0.02, 0.04) + 0.014 + aw * 0.28 + 0.045, insetZ: 0.07 };
+  }
+  addLegs(c, g, L, Dd, feet);
 
   // estrado estofado (sob as almofadas)
   const baseH = deckTop - legH;
@@ -973,6 +1059,45 @@ function runSofa(c, style) {
 }
 
 /* ---------- Chesterfield ---------- */
+// UVs das paredes laterais de um extrude pelo comprimento de arco do contorno. O gerador padrão do three
+// projeta cada trecho em x ou em y e estica a trama nas curvas (o rolo do braço ficava "listrado").
+function contourUV(mesh, pts, material) {
+  const ud = material.userData || {};
+  if (ud.uv === 'fit') return mesh;
+  const [tu, tv] = ud.tile || [1, 1];
+  const geo = mesh.geometry;
+  const P = geo.attributes.position;
+  const N = geo.attributes.normal;
+  const UV = geo.attributes.uv;
+  if (!N || !UV) return mesh;
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
+  const param = (x, y) => {
+    let best = Infinity;
+    let u = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const vx = b.x - a.x;
+      const vy = b.y - a.y;
+      const L2 = vx * vx + vy * vy || 1e-12;
+      const t = clamp(((x - a.x) * vx + (y - a.y) * vy) / L2, 0, 1);
+      const d = Math.hypot(x - a.x - vx * t, y - a.y - vy * t);
+      if (d < best) {
+        best = d;
+        u = cum[i - 1] + t * Math.sqrt(L2);
+      }
+    }
+    return u;
+  };
+  for (let i = 0; i < P.count; i++) {
+    if (Math.abs(N.getZ(i)) > 0.7) continue; // tampas da frente e de trás mantêm a projeção plana
+    UV.setXY(i, param(P.getX(i), P.getY(i)) / tu, P.getZ(i) / tv);
+  }
+  UV.needsUpdate = true;
+  return mesh;
+}
+
 // Braço rolado: perfil em "P" (vista frontal) extrudado na profundidade, com tachas na frente
 function rolledArm(c, { aw, ah, depth, ov, side, nails = true }) {
   const { kit, THREE, m, fab } = c;
@@ -995,7 +1120,7 @@ function rolledArm(c, { aw, ah, depth, ov, side, nails = true }) {
     s.lineTo(X(cx + rs * Math.cos(a)), cy + rs * Math.sin(a));
   }
   s.lineTo(X(xi), bev);
-  g.add(kit.extrude(s, depth, fab, { bevel: bev, curveSegments: 4 }));
+  g.add(contourUV(kit.extrude(s, depth, fab, { bevel: bev, curveSegments: 4 }), s.getPoints(1), fab));
   if (nails) {
     // tachas acompanhando a borda externa e o rolo
     const brass = m.metal('#8c7448', { finish: 'brushed' });
@@ -1060,14 +1185,11 @@ function chesterfield(c, nSeatHint) {
   const bandH = 0.032;
   g.add(kit.place(soft(c, Li + 0.03, deckTop - footH, D - 0.05, fab, { puff: 0.01, r: 0.01 }), { y: footH + (deckTop - footH) / 2, z: -0.025 }));
   g.add(kit.place(kit.box(Li + 0.01, bandH, 0.05, fab, { r: 0.012, seg: 2 }), { y: footH + bandH / 2, z: zF - 0.027 }));
-  const nPad = Math.max(3, Math.round(Li / 0.16));
-  const pw = Li / nPad;
+  // frente da base em capitonê (losangos com botões), como na foto — não em gomos verticais
   const padH = deckTop - footH - bandH + 0.006;
-  for (let i = 0; i < nPad; i++) {
-    const x = x0 + pw * (i + 0.5);
-    g.add(kit.place(kit.box(pw - 0.0025, padH, 0.05, fab, { r: 0.018, seg: 2 }), { x, y: footH + bandH + padH / 2 - 0.003, z: zF - 0.025 }));
-    if (i > 0) g.add(kit.place(button(c, btnMat, 0.01, 'z'), { x: x - pw / 2, y: footH + bandH + padH * 0.68, z: zF - 0.002 }));
-  }
+  const rail = tuftedFast(c, Li, padH, 0.05, fab, { rows: 2, cols: Math.max(3, Math.round(Li / 0.15)), buttonMaterial: btnMat, depth: 0.024 });
+  rail.position.set(0, footH + bandH + padH / 2 - 0.003, zF - 0.025);
+  g.add(rail);
 
   // assento capitonê inteiriço (o número de lugares define as colunas de botões)
   const seatD = D - backT - 0.012;
@@ -1181,7 +1303,8 @@ function organicSofa(c) {
   let notch = null;
   if (seats >= 2 && W > 1.2) {
     const nx = seats % 2 === 1 ? -W / 2 + W / seats + 0.02 : 0;
-    notch = { x: nx, R: clamp(W * 0.05, 0.08, 0.13), y: seatTop - 0.01 };
+    // o fundo da fenda fica abaixo da borda arredondada da almofada (senão a ponta da casca aparece sobre o assento)
+    notch = { x: nx, R: clamp(W * 0.05, 0.08, 0.13), y: seatTop - cushT * 0.6 };
   }
   const res = shellSeat(c, { y0, seatTop, cushT, Tb, Ta, leanB: 0.1, leanA: 0.14, rc: clamp(D * 0.24, 0.16, 0.26), flare: 0.0, height, notch, tip: 0.75, capDrop: 0.9, frontInset: 0.03, bulge: 0.008, baseRecess: 0.035 });
   g.add(res.group);
@@ -1205,8 +1328,49 @@ function organicSofa(c) {
   return g;
 }
 
+/* ---------- Sofá-cama click-clack / futon ---------- */
+// Sem braços: base estofada, assento e encosto em gomos (costuras verticais) e pés metálicos curtos
+function clickClack(c) {
+  const { kit, m, fab, W, H, D, label } = c;
+  const g = kit.group('sofa-clickclack');
+  const legMat = /madeira/.test(label) ? c.wood : m.metal('#cfd2d4', { finish: 'chrome' });
+  const legH = clamp(H * 0.12, 0.08, 0.12);
+  const seatTop = clamp(H * 0.5, 0.38, 0.46);
+  const seatT = clamp(H * 0.19, 0.12, 0.17);
+  const baseTop = seatTop - seatT;
+  const tilt = 0.3;
+  const bT = seatT * 0.9;
+  const yb = baseTop + 0.01;
+  const bh = (H - yb - bT * Math.sin(tilt)) / Math.cos(tilt);
+  const backFront = -D / 2 + bh * Math.sin(tilt) + bT * Math.cos(tilt);
+  const seatBack = backFront - bT * 0.55;
+  const sd = D / 2 - seatBack;
+  // pés nos cantos da base
+  const bd = sd + 0.02;
+  for (const sx of [-1, 1]) {
+    for (const z of [D / 2 - 0.06, D / 2 - bd + 0.06]) g.add(legRod(c, [sx * (W / 2 - 0.07), legH + 0.01, z], [sx * (W / 2 - 0.07), 0, z], 0.014, 0.012, legMat, { part: 'metal' }));
+  }
+  // base estofada sob o assento
+  g.add(kit.place(soft(c, W - 0.03, baseTop - legH, bd, fab, { puff: 0.02, r: 0.015, side: 0.3 }), { y: legH + (baseTop - legH) / 2, z: D / 2 - bd / 2 - 0.005 }));
+  // assento e encosto em gomos
+  const nG = Math.max(3, Math.round(W / 0.3));
+  const gw = W / nG;
+  for (let i = 0; i < nG; i++) {
+    const x = -W / 2 + gw * (i + 0.5);
+    // gomos com cantos pequenos: leem como uma placa só com costuras, não como almofadas soltas
+    g.add(kit.place(soft(c, gw - 0.002, seatT, sd, fab, { puff: 0.08, r: Math.min(0.022, seatT * 0.18), side: 0.15 }), { x, y: baseTop + seatT / 2, z: D / 2 - sd / 2 }));
+    const back = soft(c, gw - 0.002, bh, bT, fab, { puff: 0.08, r: Math.min(0.022, bT * 0.18), side: 0.15 });
+    back.rotation.x = -tilt;
+    back.position.x = x;
+    snap(c, back, { maxY: H, minZ: -D / 2 });
+    g.add(back);
+  }
+  return g;
+}
+
 export function sofa(spec, kit, THREE) {
   const c = ctx(spec, kit, THREE);
+  if (c.st.sofaBed && /click|clack|futon/.test(c.label)) return clickClack(c);
   const style = sofaStyle(c.st);
   if (style === 'organic') return organicSofa(c);
   if (style === 'chesterfield') return chesterfield(c, c.st.seats || 2);
@@ -1217,11 +1381,11 @@ export function sofa(spec, kit, THREE) {
 /* POLTRONA                                                            */
 /* ================================================================== */
 // Poltrona decorativa em casca (bouclé com pés palito), bergère de orelhas ou de balanço
-function loungeArmchair(c, { wing = false, rocker = false } = {}) {
+function loungeArmchair(c, { wing = false, rocker = false, swivel = false } = {}) {
   const { kit, m, W, H, D, st } = c;
   const g = kit.group(wing ? 'armchair-wing' : 'armchair-lounge');
   const noArms = st.arms === false && !wing;
-  const legH = rocker ? clamp(H * 0.2, 0.12, 0.2) : wing ? clamp(H * 0.13, 0.08, 0.15) : clamp(H * 0.3, 0.12, 0.26);
+  const legH = rocker ? clamp(H * 0.2, 0.12, 0.2) : swivel ? clamp(H * 0.2, 0.1, 0.17) : wing ? clamp(H * 0.13, 0.08, 0.15) : clamp(H * 0.3, 0.12, 0.26);
   const seatTop = clamp(H * (wing ? 0.45 : 0.55), 0.38, 0.47);
   const cushT = clamp(H * 0.13, 0.08, 0.14);
   const armTop = noArms ? seatTop + 0.05 : clamp(seatTop + (wing || rocker ? 0.18 : 0.155), seatTop + 0.1, H - 0.1);
@@ -1250,8 +1414,36 @@ function loungeArmchair(c, { wing = false, rocker = false } = {}) {
     bulge: 0.01,
   });
   g.add(res.group);
+  // capitonê (bergère): painel com losangos e botões curvado no contorno interno do encosto
+  if (st.tufted) {
+    const leanB = wing ? 0.1 : 0.12;
+    const rcIn = Math.min(W, D) * (wing ? 0.2 : 0.24) - Tb / 2;
+    const xf = Math.max(0.04, res.xa - Math.min(W, D) * (wing ? 0.2 : 0.24));
+    const pd = 0.045;
+    const pw = 2 * (xf + rcIn * 1.15);
+    const yBot = res.deckTop;
+    const yTopP = H - Tb * 1.05;
+    const ph = (yTopP - yBot) / Math.cos(leanB);
+    const panel = tuftedFast(c, pw, ph, pd, c.fab, { rows: 4, cols: Math.max(3, Math.round(pw / 0.12)), depth: 0.034, button: 0.0095, buttonMaterial: c.m.upholstery(kit.shade(c.main, -0.3), UPH.has(c.material) ? c.material : 'cotton') });
+    bendPanel(c, panel, { xf, Rb: rcIn, d: pd });
+    const piv = kit.group('tufted-back', panel);
+    // a placa de trás do painel fica embutida na casca: só a face capitonê aparece
+    panel.position.set(0, ph / 2, pd / 2 - (pd - 0.034) - 0.002);
+    piv.rotation.x = -leanB;
+    piv.position.set(0, yBot, res.zb + Tb / 2 - (yBot - legH) * Math.tan(leanB));
+    g.add(piv);
+  }
   const zBack = res.zb + 0.06;
   const zFront = D / 2 - 0.11;
+  if (swivel) {
+    // base giratória: disco metálico + coluna + prato sob o assento
+    const metal = /cromad|inox/.test(c.label) ? m.metal('#d4d6d8', { finish: 'chrome' }) : c.dark;
+    const Rb = clamp(Math.min(W, D) * 0.34, 0.2, 0.3);
+    g.add(kit.lathe([[0.0001, 0], [Rb - 0.006, 0], [Rb, 0.006], [Rb * 0.9, 0.018], [0.06, 0.03], [0.04, 0.036], [0.0001, 0.036]], metal, { seg: 48, part: 'metal' }));
+    g.add(kit.place(kit.cylinder(0.032, 0.036, legH - 0.03, metal, { seg: 20, part: 'metal' }), { y: 0.03 + (legH - 0.03) / 2 }));
+    g.add(kit.place(kit.cylinder(0.12, 0.12, 0.012, metal, { seg: 28, part: 'metal' }), { y: legH - 0.004 }));
+    return g;
+  }
   if (rocker) {
     // base de balanço: duas lâminas curvas de madeira ligadas por pés curtos
     const wood = c.wood;
@@ -1303,6 +1495,19 @@ function industrialArmchair(c) {
   const yTop = H - 0.03;
   const zTop = -D / 2 + tr + 0.002;
   const rubber = m.rubber('#151515');
+  // encosto estofado inclinado acompanhando os montantes
+  const ang = Math.atan2(zSB - zTop, yTop - ys);
+  const bT = clamp(D * 0.15, 0.08, 0.12);
+  const y0 = ys + tr + cushT - 0.01;
+  const bh = (H - 0.004 - y0) / Math.cos(ang) - bT * Math.sin(ang) * 0.5;
+  const back = soft(c, W - 2 * (tr + 0.012), bh, bT, fab, { puff: 0.14, r: 0.03, side: 0.3 });
+  back.rotation.x = -ang;
+  const t = 0.5;
+  back.position.set(0, lerp(y0, H, t), lerp(zSB, zTop, (lerp(y0, H, t) - ys) / (yTop - ys)) + tr + bT / 2 * Math.cos(ang));
+  snap(c, back, { maxY: H });
+  g.add(back);
+  // frente da almofada do encosto numa altura y (para o braço não entrar nela)
+  const backFrontZ = (y) => back.position.z + (bT / 2 - (y - back.position.y) * Math.sin(ang)) / Math.cos(ang);
   // quadro do assento
   g.add(kit.tube(pcurve(c, [[0, ys, zf], [xs, ys, zf], [xs, ys, zSB], [-xs, ys, zSB], [-xs, ys, zf], [0, ys, zf]], 0.035), tr, metal, { seg: 96, radial: 10, part: 'metal' }));
   for (const sx of [-1, 1]) {
@@ -1323,10 +1528,15 @@ function industrialArmchair(c) {
     g.add(rod(c, [x, ys, zPost], [x, armTop - padT, zPost], tr * 0.9, tr * 0.9, metal, { part: 'metal' }));
     const tU = (armTop - padT / 2 - ys) / (yTop - ys);
     const zU = lerp(zSB, zTop, tU);
-    const z0 = zU + 0.01;
     const z1 = zPost + 0.09;
+    const z0 = Math.min(z1 - 0.12, Math.max(zU + 0.01, backFrontZ(armTop) + 0.006));
     const armWood = m.wood(kit.shade(c.woodHex, -0.32), { grain: 'smooth' });
     g.add(kit.place(kit.box(0.056, padT, z1 - z0, armWood, { r: 0.009, grain: 'z' }), { x: sx * (W / 2 - 0.028), y: armTop - padT / 2, z: (z0 + z1) / 2 }));
+    // braçadeira metálica do montante até a ponta de trás do apoio (passa ao lado da almofada)
+    if (z0 > zU + 0.02) {
+      const yb = armTop - padT - tr * 0.8;
+      g.add(rod(c, [x, yb, lerp(zSB, zTop, (yb - ys) / (yTop - ys))], [x, yb, z0 + 0.03], tr * 0.8, tr * 0.8, metal, { part: 'metal' }));
+    }
   }
   // travessa superior do encosto
   g.add(rod(c, [-xs, yTop - 0.02, zTop + 0.004], [xs, yTop - 0.02, zTop + 0.004], tr * 0.9, tr * 0.9, metal, { part: 'metal' }));
@@ -1334,17 +1544,6 @@ function industrialArmchair(c) {
   const sw = W - 2 * (2 * tr + 0.006);
   const sd = zf + tr - zSB + 0.005;
   g.add(kit.place(soft(c, sw, cushT, sd, fab, { puff: 0.05, r: 0.022, side: 0.3 }), { y: ys + tr + cushT / 2 - 0.002, z: zf + tr - sd / 2 }));
-  // encosto estofado inclinado acompanhando os montantes
-  const ang = Math.atan2(zSB - zTop, yTop - ys);
-  const bT = clamp(D * 0.15, 0.08, 0.12);
-  const y0 = ys + tr + cushT - 0.01;
-  const bh = (H - 0.004 - y0) / Math.cos(ang) - bT * Math.sin(ang) * 0.5;
-  const back = soft(c, W - 2 * (tr + 0.012), bh, bT, fab, { puff: 0.14, r: 0.03, side: 0.3 });
-  back.rotation.x = -ang;
-  const t = 0.5;
-  back.position.set(0, lerp(y0, H, t), lerp(zSB, zTop, (lerp(y0, H, t) - ys) / (yTop - ys)) + tr + bT / 2 * Math.cos(ang));
-  snap(c, back, { maxY: H });
-  g.add(back);
   void C;
   return g;
 }
@@ -1364,13 +1563,17 @@ function runArmchair(c, style) {
 export function armchair(spec, kit, THREE) {
   const c = ctx(spec, kit, THREE);
   const { st, label } = c;
-  if (st.tufted) return runArmchair(c, 'chesterfield');
+  const wing = st.wing || /orelha|bergere|wingback/.test(label);
   if (st.reclinable || st.retractable) return runArmchair(c, 'recliner');
+  // bergère / orelha capitonê é poltrona de orelhas com encosto capitonê, não um chesterfield
+  if (wing) return loungeArmchair(c, { wing: true });
+  if (st.tufted && /chesterfield/.test(label)) return runArmchair(c, 'chesterfield');
   if (st.industrial || st.legs === 'metal') return industrialArmchair(c);
   if (/balanco/.test(label)) return loungeArmchair(c, { rocker: true });
-  if (st.wing || /orelha|bergere|wingback/.test(label)) return loungeArmchair(c, { wing: true });
+  // capitonê baixo (braços na altura do encosto) vira chesterfield; alto usa a casca com encosto capitonê
+  if (st.tufted && !st.swivel && c.H <= 0.92) return runArmchair(c, 'chesterfield');
   if (st.looseCushions) return runArmchair(c, 'confort');
-  return loungeArmchair(c);
+  return loungeArmchair(c, { swivel: !!st.swivel });
 }
 
 /* ================================================================== */
@@ -1391,8 +1594,10 @@ function wrapChair(c, { arms = false } = {}) {
   const yb = apronTop + 0.002;
   // alturas: ponta dos "braços" que abraçam o assento, cintura e topo
   const yA = seatTop + (arms ? clamp(H * 0.13, 0.1, 0.14) : clamp(H * 0.065, 0.05, 0.07));
-  const yW = seatTop + (arms ? clamp(H * 0.36, 0.26, 0.36) : clamp(H * 0.25, 0.18, 0.26));
   const yT = H;
+  // silhueta "violão": cintura a ~1/3 do encosto e alargamento suave até ~80% (sem degrau de "ombro")
+  const yW = arms ? seatTop + clamp(H * 0.36, 0.26, 0.36) : Math.max(yA + 0.08, seatTop + (yT - seatTop) * 0.36);
+  const yM = Math.max(yW + 0.1, seatTop + (yT - seatTop) * (arms ? 0.88 : 0.82));
   // controle pela largura vista de frente (X) e pelo ângulo de abraço (phi): R = X / sin(phi), meia-largura desenrolada = R * phi
   const X0 = Ws / 2 - T / 2;
   const Xw = Ws * (arms ? 0.45 : 0.37);
@@ -1400,7 +1605,7 @@ function wrapChair(c, { arms = false } = {}) {
   const phi0 = (Math.PI / 2) * 0.96;
   const phiW = arms ? 0.85 : 0.6;
   const phiT = 0.48;
-  const Rc = Ws * 0.38;
+  const Rc = Ws * 0.32;
   const tiltMax = 0.15;
   const frame = (y) => {
     let X;
@@ -1413,7 +1618,7 @@ function wrapChair(c, { arms = false } = {}) {
       phi = lerp(phi0, phiW, sstep(0, 1, t));
       X = lerp(X0, Xw, sstep(0.1, 1, t));
     } else {
-      const t = sstep(yW, yT - Rc * 0.8, y);
+      const t = sstep(yW, yM, y);
       phi = lerp(phiW, phiT, t);
       X = lerp(Xw, Xt, t);
     }
@@ -1452,7 +1657,7 @@ function wrapChair(c, { arms = false } = {}) {
       R,
     });
   }
-  const back = loft(c, stations, fab, { cs: 4, segA: 28 });
+  const back = loft(c, stations, fab, { cs: 4, segA: 28, vFrom: 'top' });
   const bb = kit.measure(back);
   const zc = -D / 2 - bb.min.z; // posição da linha de centro da casca na base
   back.position.z = zc;
@@ -1608,7 +1813,7 @@ function officeChair(c) {
     const th = (backTh / 2) * roundProf((y - y0) / 0.02) * roundProf((H - y) / (backTh / 2));
     stations.push({ o: new THREE.Vector3(0, y, z0 - Math.tan(tilt) * (y - y0)), a: new THREE.Vector3(1, 0, 0), b: new THREE.Vector3(0, Math.sin(tilt), Math.cos(tilt)), a0: -Math.max(0.003, w), a1: Math.max(0.003, w), b0: -Math.max(0.0001, th), b1: Math.max(0.0001, th), r: Math.max(0.0001, th), u: y, R: gamer ? 0.45 : 0.6 });
   }
-  const back = loft(c, stations, fab, { cs: 4, segA: 14 });
+  const back = loft(c, stations, fab, { cs: 4, segA: 14, vFrom: 'top' });
   const bb = kit.measure(back);
   back.position.z += -D / 2 - bb.min.z;
   g.add(back);
@@ -1681,7 +1886,7 @@ function shellChair(c) {
       const R = u < 0.3 ? lerp(0.7, 0.4, sstep(0.05, 0.3, u)) : lerp(0.4, 0.45, sstep(0.5, 1, u));
       st.push({ o: p, a, b, a0: -Math.max(0.003, w), a1: Math.max(0.003, w), b0: -Math.max(0.0001, tt), b1: Math.max(0.0001, tt), r: Math.max(0.0001, tt), u: sArc, R });
     }
-    return loft(c, st, shellMat, { cs: 3, segA: 16 });
+    return loft(c, st, shellMat, { cs: 3, segA: 16, vFrom: 'top' });
   };
   let kw = 1;
   let kz = 1;
@@ -1753,7 +1958,8 @@ function leggedStool(c, { bar }) {
   const legMat = metal ? c.dark : c.upholstered || /estofad/.test(label) ? c.wood : frameMat(c);
   const round = st.shape !== 'square' && Math.abs(W - D) < 0.03;
   const hasBack = /encosto/.test(label);
-  const seatTop = hasBack ? H - clamp(H * 0.3, 0.2, 0.3) : H;
+  // encosto ~27 cm acima do assento (o infer soma isso à altura do assento citada no nome)
+  const seatTop = hasBack ? H - clamp(H - 0.35, 0.15, 0.27) : H;
   const padded = c.upholstered || /estofad/.test(label);
   const seatT = padded ? 0.07 : 0.035;
   const seatMat = padded ? fab : metal ? c.wood : legMat;
@@ -1819,7 +2025,7 @@ function swivelStool(c) {
   const chrome = m.metal('#d4d6d8', { finish: 'chrome' });
   const R = Math.min(W, D) / 2;
   const hasBack = /encosto/.test(label);
-  const seatTop = hasBack ? H - clamp(H * 0.28, 0.18, 0.28) : H;
+  const seatTop = hasBack ? H - clamp(H - 0.35, 0.15, 0.27) : H;
   const seatT = 0.075;
   g.add(kit.lathe([[0.0001, 0], [R * 0.9, 0], [R * 0.92, 0.006], [R * 0.5, 0.03], [0.04, 0.04], [0.0001, 0.04]], chrome, { seg: 40, part: 'metal' }));
   const col0 = 0.04;
@@ -1877,6 +2083,174 @@ export function stool(spec, kit, THREE) {
   return leggedStool(c, { bar: H >= 0.6 || /alta|bar|balcao/.test(label) });
 }
 
+/* ---------- formas de puff ---------- */
+// Reamostra um perfil [[r, y], ...] com passo máximo 'step' (para relevos ao longo da altura)
+function resample(prof, step) {
+  const out = [prof[0]];
+  for (let i = 1; i < prof.length; i++) {
+    const [r0, y0] = prof[i - 1];
+    const [r1, y1] = prof[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(r1 - r0, y1 - y0) / step));
+    for (let k = 1; k <= n; k++) out.push([lerp(r0, r1, k / n), lerp(y0, y1, k / n)]);
+  }
+  return out;
+}
+
+// Normais da costura do LatheGeometry (primeira e última coluna) ficam iguais
+function latheSeam(geo) {
+  const N = geo.attributes.normal;
+  const segs = geo.parameters?.segments;
+  if (!N || !segs) return;
+  const np = N.count / (segs + 1);
+  for (let j = 0; j < np; j++) {
+    const a = j;
+    const b = segs * np + j;
+    const x = N.getX(a) + N.getX(b);
+    const y = N.getY(a) + N.getY(b);
+    const z = N.getZ(a) + N.getZ(b);
+    const l = Math.hypot(x, y, z) || 1;
+    N.setXYZ(a, x / l, y / l, z / l);
+    N.setXYZ(b, x / l, y / l, z / l);
+  }
+  N.needsUpdate = true;
+}
+
+// Relevo de tricô grosso: colunas de trança na vertical + carreiras na horizontal
+function knitify(c, geo, R, amp) {
+  const P = geo.attributes.position;
+  const cols = Math.max(10, Math.round((2 * Math.PI * R) / 0.055));
+  for (let i = 0; i < P.count; i++) {
+    const x = P.getX(i);
+    const y = P.getY(i);
+    const z = P.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r < 1e-4) continue;
+    const th = Math.atan2(z, x);
+    const col = 0.5 + 0.5 * Math.cos(cols * th);
+    // fase contínua (sem saltos): a costura do torno não abre fresta
+    const row = 0.5 + 0.5 * Math.cos((2 * Math.PI * y) / 0.032 + Math.sin(cols * th) * 1.2);
+    const k = (r + amp * Math.min(1, r / (R * 0.6)) * (0.55 * col + 0.45 * row * col)) / r;
+    P.setX(i, x * k);
+    P.setZ(i, z * k);
+  }
+  P.needsUpdate = true;
+  geo.computeVertexNormals();
+  latheSeam(geo);
+}
+
+// Tampo capitonê redondo: botão no centro + anel de botões, vincos e gomos estufados.
+// Altura 0 na borda (raio Rd) e domeT no alto dos gomos.
+function tuftedDisc(c, Rd, domeT, material, { relief = 0.03, btn = 0.01 } = {}) {
+  const { kit, THREE } = c;
+  const g = kit.group('tufted-top');
+  const nRing = Rd > 0.3 ? 8 : 6;
+  const rB = Rd * 0.52;
+  const btns = [[0, 0]];
+  const segs = [];
+  for (let k = 0; k < nRing; k++) {
+    const a = (k / nRing) * Math.PI * 2 + Math.PI / nRing;
+    const b = [Math.cos(a) * rB, Math.sin(a) * rB];
+    btns.push(b);
+    segs.push([[0, 0], b], [b, [Math.cos(a) * Rd * 1.05, Math.sin(a) * Rd * 1.05]]);
+  }
+  const segD = (px, pz, a, b) => {
+    const vx = b[0] - a[0];
+    const vz = b[1] - a[1];
+    const t = clamp(((px - a[0]) * vx + (pz - a[1]) * vz) / (vx * vx + vz * vz), 0, 1);
+    return Math.hypot(px - a[0] - vx * t, pz - a[1] - vz * t);
+  };
+  const Rp = rB * 0.6;
+  const hAt = (x, z) => {
+    let db = 9;
+    for (const [bx, bz] of btns) db = Math.min(db, Math.hypot(x - bx, z - bz));
+    let dl = 9;
+    for (const [a, b] of segs) dl = Math.min(dl, segD(x, z, a, b));
+    const dip = Math.max(1 - Math.pow(sstep(0, Rp, db), 0.7), (1 - sstep(0, 0.016, dl)) * 0.45);
+    const edge = sstep(0, 0.04, Rd - Math.hypot(x, z));
+    return edge * (domeT - relief * dip);
+  };
+  // grade polar
+  const nr = 22;
+  const ns = 72;
+  const P = [0, hAt(0, 0), 0];
+  for (let i = 1; i <= nr; i++) {
+    const r = (Rd * i) / nr;
+    for (let j = 0; j < ns; j++) {
+      const a = (j / ns) * Math.PI * 2;
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      P.push(x, i === nr ? 0 : hAt(x, z), z);
+    }
+  }
+  const idx = [];
+  const vi = (i, j) => (i === 0 ? 0 : 1 + (i - 1) * ns + (j % ns));
+  for (let j = 0; j < ns; j++) idx.push(0, vi(1, j + 1), vi(1, j));
+  for (let i = 1; i < nr; i++) {
+    for (let j = 0; j < ns; j++) {
+      const a = vi(i, j);
+      const b = vi(i, j + 1);
+      const cI = vi(i + 1, j);
+      const d = vi(i + 1, j + 1);
+      idx.push(a, b, d, a, d, cI);
+    }
+  }
+  const ud = material.userData || {};
+  const [tu, tv] = ud.uv === 'fit' ? [1, 1] : ud.tile || [1, 1];
+  const UV = [];
+  for (let k = 0; k < P.length; k += 3) UV.push(P[k] / tu, P[k + 2] / tv);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  if (geo.attributes.normal.getY(0) < 0) {
+    for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+  }
+  g.add(kit.mesh(geo, material, { keepUV: true }));
+  for (const [bx, bz] of btns) {
+    const b = button(c, material, bx === 0 && bz === 0 ? btn * 1.2 : btn);
+    b.position.set(bx, hAt(bx, bz) + 0.003, bz);
+    g.add(b);
+  }
+  return g;
+}
+
+// Puff pera (bean bag): gota de base larga com o amassado do assento na frente
+function beanBag(c, g) {
+  const { kit, THREE, W, H, D, fab } = c;
+  const R = Math.max(W, D) / 2;
+  const key = [[0.0001, 0], [0.8, 0], [0.96, 0.03], [1, 0.13], [0.97, 0.3], [0.86, 0.48], [0.7, 0.65], [0.52, 0.8], [0.34, 0.92], [0.17, 0.985], [0.0001, 1]];
+  const curve = new THREE.SplineCurve(key.map(([r, y]) => new THREE.Vector2(r, y)));
+  const prof = curve.getSpacedPoints(36).map((p, i, arr) => [i === 0 || i === arr.length - 1 ? 0.0001 : Math.max(0.0001, Math.min(1, p.x)) * R, clamp(p.y, 0, 1) * H]);
+  prof[0][1] = 0;
+  prof[prof.length - 1][1] = H;
+  const body = kit.lathe(prof, fab, { seg: 64 });
+  const geo = body.geometry;
+  const P = geo.attributes.position;
+  for (let i = 0; i < P.count; i++) {
+    let x = P.getX(i);
+    let z = P.getZ(i);
+    const u = P.getY(i) / H;
+    const r = Math.hypot(x, z);
+    if (r > 1e-4) {
+      const front = Math.max(0, z / r);
+      const dent = 0.16 * R * Math.exp(-(((u - 0.6) / 0.15) ** 2)) * Math.pow(front, 1.6);
+      const k = Math.max(0.2, 1 - dent / r);
+      x *= k;
+      z *= k;
+    }
+    P.setX(i, (x * W) / (2 * R));
+    P.setZ(i, (z * D) / (2 * R));
+  }
+  P.needsUpdate = true;
+  geo.computeVertexNormals();
+  latheSeam(geo);
+  g.add(body);
+  return g;
+}
+
 /* ================================================================== */
 /* PUFF                                                                */
 /* ================================================================== */
@@ -1911,23 +2285,45 @@ export function pouf(spec, kit, THREE) {
     }
     return g;
   }
-  const round = st.shape === 'round' || (st.shape !== 'square' && Math.abs(W - D) < 0.03 && !/quadrad/.test(label));
+  // puff pera (bean bag), puff bola e puff de tricô/crochê têm formas próprias
+  if (/pera|bean ?bag|saco|gota/.test(label)) return beanBag(c, g);
+  const ball = /bola|esfera/.test(label);
+  const knit = /trico|tricot|croche|trancad/.test(label);
+  const round = ball || st.shape === 'round' || (st.shape !== 'square' && Math.abs(W - D) < 0.03 && !/quadrad/.test(label));
   if (round) {
     const R = Math.min(W, D) / 2;
-    const e = Math.min(bodyH * 0.22, 0.06, R * 0.4);
-    const dome = st.tufted ? 0 : 0.01;
-    const prof = [[0.0001, 0], [R - e, 0], [R - e * 0.3, e * 0.28], [R, e], [R, bodyH - e - dome], [R - e * 0.3, bodyH - e * 0.28 - dome], [R - e, bodyH - dome], [R * 0.5, bodyH - dome * 0.2], [0.0001, bodyH]];
-    const body = kit.lathe(prof, fab, { seg: 48 });
+    const amp = knit ? 0.007 : 0; // relevo do tricô (o perfil encolhe para a caixa continuar exata)
+    const R0 = R - amp;
+    let body;
+    if (ball) {
+      // bola: superelipse (achata um pouco embaixo e em cima)
+      const prof = [];
+      for (let k = 0; k <= 28; k++) {
+        const t = -Math.PI / 2 + (Math.PI * k) / 28;
+        const ct = Math.cos(t);
+        const sn = Math.sin(t);
+        prof.push([Math.max(0.0001, R0 * Math.pow(Math.abs(ct), 2 / 2.4)), bodyH / 2 + (bodyH / 2) * Math.sign(sn) * Math.pow(Math.abs(sn), 2 / 2.4)]);
+      }
+      prof[0][1] = 0;
+      prof[28][1] = bodyH;
+      body = kit.lathe(knit ? resample(prof, 0.007) : prof, fab, { seg: knit ? 112 : 56 });
+    } else {
+      const e = Math.min(bodyH * 0.22, 0.06, R0 * 0.4);
+      const eb = e * 0.45; // base menos arredondada: o puff assenta no chão
+      const domeT = st.tufted ? 0.014 : 0;
+      const dome = st.tufted ? 0 : 0.01;
+      const top = bodyH - domeT;
+      const prof = [[0.0001, 0], [R0 - eb, 0], [R0 - eb * 0.3, eb * 0.28], [R0, eb], [R0, top - e - dome], [R0 - e * 0.3, top - e * 0.28 - dome], [R0 - e, top - dome]];
+      if (!st.tufted) prof.push([R0 * 0.5, top - dome * 0.2], [0.0001, top]);
+      body = kit.lathe(knit ? resample(prof, 0.007) : prof, fab, { seg: knit ? 112 : 48 });
+      if (pipe && !knit) for (const [y, rr] of [[legH + top - e * 0.28 - dome, R0 - e * 0.3], [legH + eb * 0.28, R0 - eb * 0.3]]) g.add(kit.place(ring(c, rr, 0.004, pipe), { y }));
+      if (st.tufted) g.add(kit.place(tuftedDisc(c, R0 - e, domeT, fab), { y: legH + top }));
+    }
+    if (knit) knitify(c, body.geometry, R0, amp);
     body.position.y = legH;
     g.add(body);
-    if (pipe) for (const y of [legH + bodyH - e * 0.28 - dome, legH + e * 0.28]) g.add(kit.place(ring(c, R - e * 0.3, 0.004, pipe), { y }));
-    if (st.tufted) {
-      g.add(kit.place(button(c, fab, 0.012), { y: H - 0.004 }));
-      for (let k = 0; k < 6; k++) {
-        const a = (k / 6) * Math.PI * 2;
-        g.add(kit.place(button(c, fab, 0.009), { x: Math.cos(a) * R * 0.5, y: H - 0.006, z: Math.sin(a) * R * 0.5 }));
-      }
-    }
+    // medidas diferentes num puff redondo (digitadas pela equipe): vira oval para bater a caixa
+    if (Math.abs(W - D) > 0.005) for (const ch of g.children) ch.scale.set((ch.scale.x * W) / (2 * R), ch.scale.y, (ch.scale.z * D) / (2 * R));
   } else {
     const r = Math.min(0.04, bodyH * 0.22);
     const pf = st.tufted ? 0.04 : 0.1;

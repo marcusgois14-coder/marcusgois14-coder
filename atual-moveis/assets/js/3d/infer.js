@@ -134,6 +134,10 @@ function dimsDefault(kind, st) {
   // assentos: banqueta baixa/alta, poltrona reclinável, bergère, de balanço e sofá retrátil
   if (kind === 'stool' && !st.bench && / baix[oa]s? /.test(st._name || '')) o = { w: 38, h: 45, d: 38 };
   if (kind === 'stool' && !st.bench && / (alt[oa]s?|bar|balcao) /.test(st._name || '')) o = { w: 40, h: 75, d: 40 };
+  // banqueta com encosto: a altura de referência é a do assento; o encosto soma ~27 cm
+  if (kind === 'stool' && !st.bench && / encosto /.test(st._name || '')) o = { ...(o || def), h: ((o || def).h || 70) + 27 };
+  // puff pera / bean bag é bem maior que o puff comum
+  if (kind === 'pouf' && / (pera|bean ?bags?|saco|gota) /.test(st._name || '')) o = / infantil /.test(st._name || '') ? { w: 55, h: 70, d: 55 } : { w: 70, h: 90, d: 70 };
   if (kind === 'armchair' && st.reclinable) o = { w: 88, h: 102, d: 92 };
   if (kind === 'armchair' && st.wing) o = { w: 78, h: 105, d: 82 };
   if (kind === 'armchair' && / balanco /.test(st._name || '')) o = { w: 66, h: 100, d: 90 };
@@ -145,14 +149,58 @@ function dimsDefault(kind, st) {
   if (kind === 'tv' && st.monitor) o = { w: 54, h: 42, d: 18 };
   // sala/cozinha: subtipos com medidas bem diferentes do padrão do tipo
   const nm = st._name || '';
+  // eletro: medidas que mudam com o subtipo, a capacidade (litros/BTUs) e o número de bocas
+  if (kind === 'fridge' && st.freezer === 'vertical') {
+    const L = st.capacityL || 200;
+    o = { w: L > 260 ? 60 : 55, h: Math.round(Math.min(185, Math.max(85, 80 + L * 0.33))), d: L > 260 ? 70 : 63 };
+  } else if (kind === 'fridge' && !o && st.sideBySide) o = { w: 91, h: 178, d: 72 };
+  else if (kind === 'fridge' && !o && st.frenchDoor) o = { w: 83, h: 186, d: 75 };
+  else if (kind === 'fridge' && !o && st.capacityL > 130) {
+    const L = st.capacityL;
+    o = { w: L >= 430 ? 70 : L >= 340 ? 63 : 60, h: Math.round(Math.min(190, Math.max(120, 105 + L * 0.19))), d: L >= 430 ? 73 : 70 };
+  }
+  if (kind === 'stove' && !st.cooktop && st.burners >= 5) o = st.burners >= 6 ? { w: 90, h: 90, d: 66 } : { w: 76, h: 90, d: 65 };
+  if (kind === 'stove' && st.cooktop) o = st.burners >= 5 ? { w: 75, h: 6, d: 52 } : st.burners && st.burners <= 2 ? { w: 30, h: 6, d: 52 } : { w: 60, h: 6, d: 52 };
+  if (kind === 'air_conditioner' && st.window) o = (st.btu || 7500) > 9000 ? { w: 56, h: 37, d: 63 } : { w: 47, h: 34, d: 52 };
+  else if (kind === 'air_conditioner' && st.cooler) o = (st.capacityL || 0) >= 40 ? { w: 45, h: 115, d: 37 } : (st.capacityL || 0) >= 10 ? { w: 38, h: 85, d: 30 } : { w: 28, h: 65, d: 25 };
+  else if (kind === 'air_conditioner' && !st.portable && st.btu) {
+    const b = st.btu;
+    o = b >= 30000 ? { w: 120, h: 34, d: 26 } : b >= 22000 ? { w: 110, h: 33, d: 24 } : b >= 16000 ? { w: 100, h: 31, d: 22 } : b >= 11000 ? { w: 85, h: 29, d: 20 } : { w: 80, h: 28, d: 20 };
+  }
+  if (kind === 'small_appliance' && st.espresso) o = { w: 24, h: 31, d: 30 };
+  if (kind === 'small_appliance' && st.stick) o = { w: 7, h: 38, d: 7 };
+  if (kind === 'small_appliance' && st.bottle) o = / (mesa|bancada) /.test(nm) ? { w: 31, h: 85, d: 33 } : { w: 31, h: 130, d: 33 };
   if (kind === 'side_table' && st.console) o = { w: 120, h: 80, d: 35 };
   if (kind === 'desk' && st.vanity) o = { w: 100, h: 140, d: 42 };
   if (kind === 'rack' && st.panel) o = { w: 180, h: 160, d: 35 };
+  else if (kind === 'rack' && / (home theaters?|estantes? home|estantes? para tv) /.test(nm)) o = { w: 220, h: 180, d: 45 };
+  if (kind === 'desk' && st.corner && !st.vanity) o = { w: 150, h: 75, d: 120 };
+  if (kind === 'shelf' && st.floating) o = { w: 60, h: 4, d: 22 };
   if (kind === 'shelf' && / nichos? /.test(nm) && !/ estantes? /.test(nm)) o = { w: 40, h: 30, d: 25 };
   if (kind === 'kitchen_cabinet' && / aereos? /.test(nm)) o = { w: 120, h: 60, d: 32 };
   else if (kind === 'kitchen_cabinet' && / paneleiros? /.test(nm)) o = { w: 70, h: 200, d: 52 };
   else if (kind === 'kitchen_cabinet' && / (balcao|balcoes|gabinetes?) /.test(nm)) o = { w: 120, h: 86, d: 50 };
   if (st.shape === 'round' && (kind === 'coffee_table' || kind === 'dining_table')) o = kind === 'coffee_table' ? { w: 80, h: 40, d: 80 } : { w: 110, h: 77, d: 110 };
+  // quarto: medidas que mudam muito conforme o subtipo
+  const lim = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const nd = Number(st.drawers) || 0;
+  const ndoor = Number(st.doors) || 0;
+  if (kind === 'bed' && st.box && !st.headboardOnly) o = { w: 138, d: 188, h: st.baseOnly ? 40 : st.headboard && st.headboard !== 'none' ? 120 : 66 };
+  if (kind === 'bed' && st.house) o = { w: 100, h: 170, d: 205 };
+  else if (kind === 'bed' && st.montessori) o = { w: 100, h: 42, d: 205 };
+  if (kind === 'bed' && st.sideTables && !st.box) o = { ...(o || {}), w: 260 };
+  if (kind === 'bunk_bed' && st.triple) o = { h: 175 };
+  if (kind === 'crib' && st.portable) o = { w: 100, h: 76, d: 72 };
+  if (kind === 'nightstand' && st.shape === 'round') o = { w: 45, h: 55, d: 45 };
+  if (kind === 'dresser' && / (chiffoniers?|chifoniers?) /.test(nm)) o = { w: 70, h: lim(30 + 18 * (nd || 5), 100, 150), d: 42 };
+  else if (kind === 'dresser' && / gaveteiros? /.test(nm)) o = st.wheels || / escritorio /.test(nm) ? { w: 40, h: lim(15 + 16 * (nd || 3), 45, 80), d: 47 } : { w: 50, h: lim(20 + 18 * (nd || 5), 60, 130), d: 42 };
+  else if (kind === 'dresser' && st.shoeCabinet) o = { w: 70, h: 105, d: 35 };
+  else if (kind === 'dresser' && st.sideboard) o = { w: 160, h: 85, d: 42 };
+  else if (kind === 'dresser' && st.changer) o = { w: 100, h: 96, d: 50 };
+  // guarda-roupa: a largura acompanha o número de portas (8 portas não cabem em 1,80 m)
+  if (kind === 'wardrobe' && ndoor && !st.open) o = { w: st.sliding ? lim(ndoor * 88, 120, 300) : lim(30 + 32 * ndoor, 60, 300) };
+  // armário multiuso (área de serviço/cozinha): alto e raso
+  if (kind === 'wardrobe' && / multiuso /.test(nm)) o = { w: ndoor >= 3 ? 110 : 75, h: 185, d: 40 };
   return o ? { ...def, ...o } : def;
 }
 
@@ -235,6 +283,7 @@ const COLOR_TABLE = [
   ['conhaque|whisky|whiskey|havana', '#8a4b2a'],
   ['ferrugem|telha|cobre envelhecido', '#a14a24'],
   ['terracota|terra cota', '#c9692b'],
+  ['travertino|travertino romano', '#d9c9ae'],
   ['bege|beige|camel', '#d8cba0'],
   ['areia|sand', '#e6dccb'],
   ['creme|baunilha|perola', '#f1e6cc'],
@@ -387,8 +436,9 @@ const RULE_TABLE = [
   ['kitchen_cabinet', ['cozinhas?', 'area de servico', 'lavanderias?', 'banheiros?'], {}, true],
   // eletro
   ['tv', ['tvs?', 'smart tvs?', 'televisores?', 'televisao', 'televisoes', 'tv led', 'tv smart']],
-  ['tv', ['monitores?', 'monitor gamer'], { monitor: true }],
-  ['fridge', ['geladeiras?', 'refrigeradores?', 'freezers?', 'freezers? verticais', 'freezer vertical', 'geladeiras? e freezers?']],
+  ['tv', ['monitor(es)?', 'monitor gamer'], { monitor: true }],
+  ['fridge', ['geladeiras?', 'refrigeradores?', 'freezers?', 'geladeiras? e freezers?']],
+  ['fridge', ['freezers? verticais', 'freezer vertical'], { freezer: 'vertical' }],
   ['fridge', ['freezers? horizontais', 'freezer horizontal'], { freezer: 'chest' }],
   ['fridge', ['frigobares?', 'frigobar', 'minibar', 'mini geladeiras?'], { minibar: true }],
   ['fridge', ['adegas?', 'cervejeiras?'], { wine: true }],
@@ -398,10 +448,12 @@ const RULE_TABLE = [
   ['washer', ['tanquinhos?', 'centrifugas?( de roupas?)?'], { topLoad: true, tanquinho: true }],
   ['stove', ['fogao', 'fogoes', 'fogareiros?']],
   ['stove', ['cooktops?', 'cook tops?'], { cooktop: true }],
-  ['microwave', ['micro ondas', 'microondas', 'micro onda']],
+  ['microwave', ['micro ondas', 'microondas', 'micro onda', 'fornos? (de )?micro ondas?', 'fornos? (de )?microondas']],
   ['microwave', ['fornos? eletricos?', 'fornos? de embutir', 'fornos? de bancada', 'fornos?'], { electricOven: true }],
   ['air_conditioner', ['ar condicionados?', 'ares condicionados', 'condicionadores? de ar', 'split', 'splits', 'ar split', 'climatizacao']],
-  ['air_conditioner', ['climatizadores?', 'ar portatil', 'ar condicionado portatil'], { portable: true }],
+  ['air_conditioner', ['ar condicionados? (de )?janela', 'ar de janela'], { window: true }],
+  ['air_conditioner', ['ar portatil', 'ar condicionado portatil'], { portable: true }],
+  ['air_conditioner', ['climatizadores?( de ar| evaporativos?)?'], { portable: true, cooler: true }],
   ['small_appliance', ['eletroportateis', 'eletroportatil', 'portateis', 'eletros? portateis', 'utilidades domesticas', 'cozinha eletrica']],
   // decoração, têxteis e outros (gerador genérico com arquétipo)
   ['generic', ['tapetes?', 'passadeiras?'], { family: 'decor', decor: 'rug' }],
@@ -590,7 +642,7 @@ const UPHOLSTERY_TABLE = [
   ['fabric', 'tecido|estofad[oa]s?|estofamento'],
 ];
 const BODY_TABLE = [
-  ['marble', 'marmore|marmorizad[oa]|granito|pedra sinterizada|sinterizad[oa]|quartzo'],
+  ['marble', 'marmore|marmorizad[oa]|granito|pedra sinterizada|sinterizad[oa]|quartzo|travertino'],
   ['glass', 'vidro|tampo de vidro|cristal|acrilico'],
   ['steel', 'inox|aco inox|aco escovado|aco inoxidavel'],
   ['wood', 'madeira( macica| de demolicao| de eucalipto| de pinus| natural)?|macic[oa]|demolicao|eucalipto|pinus|tauari|jequitiba|teca|carvalho macico|freijo macico'],
@@ -602,6 +654,7 @@ const BODY_TABLE = [
 ];
 const compileTable = (t) => t.map(([id, src]) => ({ id, re: compile(src) }));
 const UPHOLSTERY = compileTable(UPHOLSTERY_TABLE);
+const UPHOLSTERY_SPECIFIC = UPHOLSTERY.filter((r) => r.id !== 'fabric');
 const BODY = compileTable(BODY_TABLE);
 function firstOf(table, text) {
   let best = null;
@@ -620,8 +673,16 @@ function inferMaterial(kind, p, variant) {
   const sources = (appliance ? [variant?.name, p.name, specMat] : [variant?.name, p.name, specMat, p.short_description, p.description]).map(normText);
   if (UPHOLSTERED.has(kind) || kind === 'generic' || kind === 'stool') {
     for (const t of sources) {
-      const u = firstOf(UPHOLSTERY, t);
+      // tecido específico (veludo, linho, suede...) vale mais que o genérico "estofado/tecido" no mesmo texto
+      const u = firstOf(UPHOLSTERY_SPECIFIC, t) || firstOf(UPHOLSTERY, t);
       if (u) return u;
+    }
+    // cadeira sem tecido no nome: o corpo decide (polipropileno, madeira, metal...)
+    if (kind === 'chair') {
+      for (const t of sources.slice(1)) {
+        const b = firstOf(BODY.filter((r) => r.id !== 'cane'), t);
+        if (b) return b;
+      }
     }
     if (UPHOLSTERED.has(kind)) return DEFAULTS[kind].material;
   }
@@ -722,18 +783,37 @@ function parseStyle(kind, p, variant, rawText) {
   if (has(t, 'molas ensacadas|molas pocket|pocket')) st.springs = 'pocket';
   else if (has(t, 'molas bonnel|molas|bonnel')) st.springs = 'bonnel';
   else if (has(t, 'espuma|d23|d28|d33|d45|d40|ortopedico|latex|viscoelastico')) st.springs = 'foam';
-  const size = /( super king | king | queen | solteirao | solteiro | viuva | casal | berco )/.exec(t);
-  if (size) st.mattressSize = size[1].trim().replace('super king', 'king');
+  // tamanho: o mais específico vence ("Cama Box Casal King" é king, não casal)
+  const size = [' super king ', ' king ', ' queen ', ' solteirao ', ' viuva ', ' solteiro ', ' casal ', ' berco '].find((w) => t.includes(w));
+  if (size) st.mattressSize = size.trim().replace('super king', 'king');
+  // quarto: provençal, trocador, montessoriana/casinha, criados acoplados, berço portátil ou com cômoda,
+  // closet aberto e móvel espelhado (todo revestido de espelho)
+  if (has(t, 'provencal|provencais|provence')) st.provencal = true;
+  if (has(t, 'trocador|com trocador') && kind === 'dresser') st.changer = true;
+  if (kind === 'wardrobe' && has(t, 'maleiros?|com maleiro')) st.maleiro = true;
+  if (kind === 'dresser' && has(t, 'basculantes?')) st.flaps = true;
+  if (has(t, 'montessorian[oa]s?|montessori') && FAMILY[kind] === 'bed') st.montessori = true;
+  if (has(t, 'casinha|formato de casa|estilo casinha') && FAMILY[kind] === 'bed') st.house = true;
+  if (kind === 'bed' && has(t, 'mesas? laterais|criados? mudos? acoplados?|criados? acoplados?|com criados?( mudos?)?|mesas? de cabeceira acopladas?|com mesas? de cabeceira')) st.sideTables = true;
+  if (kind === 'crib' && has(t, 'portatil|portateis|cercadinho|chiqueirinho|playard|play yard')) st.portable = true;
+  if (kind === 'crib' && has(t, 'comodas?|comoda acoplada')) st.chest = true;
+  if (kind === 'wardrobe' && has(t, 'closet aberto|aberto|aberta|sem portas?|cabideiro|arara')) st.open = true;
+  if ((kind === 'nightstand' || kind === 'dresser') && has(t, 'espelhad[oa]s?')) st.mirrored = true;
   // armários
   if (has(t, 'portas? de correr|de correr|deslizantes?')) st.sliding = true;
   if (has(t, 'espelh(o|os|ad[oa]s?)|com espelho')) st.mirror = true;
   if (has(t, 'palhinha|rattan|vime|tela sextavada|cane')) st.cane = true;
   if (has(t, 'vidro|tampo de vidro|portas? de vidro|cristal')) st.glass = true;
-  if (has(t, 'marmore|marmorizad[oa]|pedra sinterizada|sinterizad[oa]|granito')) st.marble = true;
+  if (has(t, 'marmore|marmorizad[oa]|pedra sinterizada|sinterizad[oa]|granito|travertino')) st.marble = true;
   if (has(t, 'redond[oa]s?|circular(es)?')) st.shape = 'round';
   else if (has(t, 'ova(l|is)')) st.shape = 'oval';
   else if (has(t, 'quadrad[oa]s?')) st.shape = 'square';
   if (has(t, 'suspens[oa]s?|de parede|parede|flutuante')) st.wallMount = true;
+  if (FAMILY[kind] === 'table' && has(t, 'tripes?')) {
+    st.legCount = 3;
+    if (!st.shape) st.shape = 'round';
+  }
+  if (kind === 'shelf' && has(t, 'prateleiras?') && !has(t, 'estantes?|livreiros?|nichos?|niveis|andares') && (st.wallMount || has(t, 'flutuantes?'))) st.floating = true;
   if (has(t, 'led|com led|iluminacao')) st.led = true;
   if (has(t, 'industrial')) st.industrial = true;
   if (has(t, 'rustic[oa]s?|demolicao')) st.rustic = true;
@@ -771,6 +851,15 @@ function parseStyle(kind, p, variant, rawText) {
     }
   }
   if (has(t, 'ventilador de teto')) st.ceiling = true;
+  // eletro: subtipos que mudam a forma do modelo
+  const nmE = normText(p.name);
+  if (kind === 'fridge' && !st.freezer && /^ freezers? /.test(nmE)) st.freezer = has(nmE, 'horizontal|horizontais|tampas?') ? 'chest' : 'vertical';
+  if (kind === 'air_conditioner' && has(t, 'janela')) st.window = true;
+  const btu = /(\d{1,2})[.,]?(\d{3})\s*btus?\b/i.exec(raw);
+  if (btu && kind === 'air_conditioner') st.btu = Number(btu[1] + btu[2]);
+  if (st.appliance === 'coffee_maker' && has(t, 'expresso|espresso|capsulas?|nespresso|dolce gusto|tres coracoes|\\d+ bar|bares')) st.espresso = true;
+  if (st.appliance === 'blender' && has(nmE, 'mixer(es)?|de mao')) st.stick = true;
+  if (st.appliance === 'water_purifier' && has(t, 'garrafao|garrafoes|bebedouros? de coluna|bebedouros? de pe|bebedouros? de mesa')) st.bottle = true;
   return st;
 }
 
@@ -792,13 +881,15 @@ const FLAT = new Set(['mattress', 'bed', 'bunk_bed', 'coffee_table', 'side_table
 // Lê medidas do texto ("138x188x30 cm", "160 x 90", "210 cm", "1,20 m")
 function dimsFromText(kind, text, flat = FLAT.has(kind), dh = DEFAULTS[kind]?.h || 60) {
   const s = String(text || '').toLowerCase();
-  const N = '(\\d+(?:[.,]\\d+)?)\\s*(cm|mm|m)?';
+  // a unidade precisa terminar a palavra ("188 molas" não é 188 metros)
+  const N = '(\\d+(?:[.,]\\d+)?)\\s*(?:(cm|mm|m)\\b)?';
   let m = new RegExp(`${N}\\s*[x×]\\s*${N}\\s*[x×]\\s*${N}`).exec(s);
   if (m) {
     const u = m[6] || m[4] || m[2];
     const v = [toCm(m[1], m[2] || u), toCm(m[3], m[4] || u), toCm(m[5], m[6] || u)];
     if (v.every(Boolean)) {
-      let idx = 0;
+      // empate: vale a convenção brasileira L x A x P
+      let idx = 1;
       v.forEach((x, i) => {
         if (Math.abs(x - dh) < Math.abs(v[idx] - dh)) idx = i;
       });
@@ -812,14 +903,20 @@ function dimsFromText(kind, text, flat = FLAT.has(kind), dh = DEFAULTS[kind]?.h 
     const u = m[4] || m[2];
     const a = toCm(m[1], m[2] || u);
     const b = toCm(m[3], m[4] || u);
-    if (a && b) return flat ? { w: a, d: b, fromMattress: kind === 'bed' || kind === 'bunk_bed' } : { w: a, h: b };
+    if (a && b && flat) return { w: a, d: b, fromMattress: kind === 'bed' || kind === 'bunk_bed' };
+    // sofá de canto / com chaise: "280x220" é largura x profundidade (sofá não tem 1,2 m de altura)
+    if (a && b && kind === 'sofa' && b >= 120) return { w: a, d: b };
+    if (a && b) return { w: a, h: b };
   }
   m = /(\d+(?:[.,]\d+)?)\s*(cm|m)\b/.exec(s);
   if (m && kind !== 'tv') {
     const v = toCm(m[1], m[2]);
     if (v) {
       if (kind === 'mattress' && v <= 45) return { h: v };
-      if (kind === 'stool' && v <= 100) return { h: v }; // "Banqueta 75 cm" é a altura
+      // "Banqueta 75 cm" é a altura; com encosto, os 75 cm são do assento e o encosto soma ~27 cm
+      if (kind === 'stool' && v <= 100) return { h: / encosto /.test(` ${normText(s)} `) && v <= 85 ? v + 27 : v };
+      // armário multiuso: a medida única do nome é a altura ("Multiuso 2 Portas 180 cm")
+      if (kind === 'wardrobe' && / multiuso /.test(` ${normText(s)} `) && v >= 120) return { h: v };
       return { w: v };
     }
   }
@@ -830,7 +927,7 @@ function dimsFromSpecs(kind, p, flat, dh) {
   for (const s of specList(p)) {
     const l = normText(s.label);
     const val = String(s.value ?? '');
-    const one = /(\d+(?:[.,]\d+)?)\s*(cm|mm|m)?/i.exec(val);
+    const one = /(\d+(?:[.,]\d+)?)\s*(?:(cm|mm|m)\b)?/i.exec(val);
     const v = one ? toCm(one[1], one[2]?.toLowerCase()) : null;
     if (/ largura /.test(l) && v) out.w = v;
     else if (/ altura /.test(l) && v) out.h = v;
@@ -847,7 +944,7 @@ function dimsFromSpecs(kind, p, flat, dh) {
 
 function inferDims(kind, p, style) {
   const def = dimsDefault(kind, { ...style, _name: normText(p.name) });
-  const flat = (FLAT.has(kind) && !style.headboardOnly) || (kind === 'generic' && (style.decor === 'rug' || style.textile));
+  const flat = (FLAT.has(kind) && !style.headboardOnly) || (kind === 'generic' && (style.decor === 'rug' || style.textile)) || (kind === 'shelf' && style.floating);
   const out = { w: pos(p.width_cm), h: pos(p.height_cm), d: pos(p.depth_cm) };
   // conserta unidades digitadas erradas (mm ou metros)
   for (const k of ['w', 'h', 'd']) {
@@ -860,7 +957,9 @@ function inferDims(kind, p, style) {
   }
   const fill = (src) => {
     let add = { ...src };
-    if (src.fromMattress && add.w && add.d) add = { ...add, w: add.w + 12, d: add.d + 17 };
+    // medida do colchão vira medida da cama (+ estrutura); a cama box tem a medida do próprio colchão
+    // (com mesas laterais acopladas, soma ~50 cm de cada lado)
+    if (src.fromMattress && add.w && add.d && !style.box) add = { ...add, w: add.w + 12 + (style.sideTables ? 100 : 0), d: add.d + 17 };
     for (const k of ['w', 'h', 'd']) if (out[k] == null && pos(add[k])) out[k] = add[k];
   };
   fill(dimsFromSpecs(kind, p, flat, def.h));
@@ -870,8 +969,8 @@ function inferDims(kind, p, style) {
     const ms = MATTRESS_SIZES[style.mattressSize] || (kind === 'crib' ? MATTRESS_SIZES.berco : null);
     if (ms) {
       if (kind === 'mattress') fill({ w: ms.w, d: ms.d, h: style.pillowTop ? 30 : 25 });
-      else if (kind === 'bed') fill(style.headboardOnly ? { w: ms.w + 12 } : { w: ms.w + 12, d: ms.d + 17 });
-      else fill({ w: ms.d + 8, d: ms.w + 10 });
+      else if (kind === 'bed') fill(style.headboardOnly ? { w: ms.w + 12 } : style.box ? { w: ms.w, d: ms.d + (style.headboard && style.headboard !== 'none' ? 8 : 0) } : { w: ms.w + 12 + (style.sideTables ? 100 : 0), d: ms.d + 17 });
+      else if (!style.portable) fill({ w: ms.d + 8 + (style.chest ? 50 : 0), d: ms.w + 10 });
     }
   }
   if (kind === 'tv' && style.screenIn) {
@@ -884,6 +983,11 @@ function inferDims(kind, p, style) {
   if (kind === 'sofa' && style.corner) fill({ w: style.seats ? Math.max(200, Math.ceil(style.seats / 2) * 65 + 110) : 250, d: 200 });
   if (kind === 'sofa' && style.chaise && !style.corner) fill({ d: 160 });
   if (kind === 'sofa' && style.seats) fill({ w: style.seats * 60 + 40 });
+  // puff/banqueta redondo (ou bola): uma medida só vale como diâmetro
+  if ((kind === 'pouf' || kind === 'stool') && !style.bench && (style.shape === 'round' || / (bola|esfera) /.test(` ${normText(p.name)} `))) {
+    if (out.w != null && out.d == null) out.d = out.w;
+    else if (out.d != null && out.w == null) out.w = out.d;
+  }
   // mesa redonda: uma medida só vale como diâmetro; com cadeiras, o diâmetro vem do número de lugares
   if (FAMILY[kind] === 'table' && style.shape === 'round') {
     if (out.w != null && out.d == null) out.d = out.w;
@@ -938,8 +1042,9 @@ function styleDefaults(kind, dims, st, material, woodLook) {
       s.legs = 'wood';
       break;
     case 'bed':
-      s.headboard = st.box ? 'none' : material === 'wood' || woodLook ? 'panel' : 'upholstered';
-      s.legs = st.box ? 'hidden' : 'wood';
+      // cama de ferro/aço/tubular: cabeceira e peseira de tubos
+      s.headboard = st.box ? 'none' : material === 'wood' || woodLook ? 'panel' : material === 'metal' || material === 'steel' ? 'metal' : 'upholstered';
+      s.legs = st.box ? 'hidden' : material === 'metal' || material === 'steel' ? 'metal' : 'wood';
       break;
     case 'mattress':
       s.pillowTop = false;
@@ -1085,8 +1190,10 @@ export function specTitle(spec) {
       return `Sofá ${plural(s.seats || 3, 'lugar', 'lugares')}${s.chaise ? ' com chaise' : ''}`;
     case 'mattress':
       return s.pillow ? 'Travesseiro' : `Colchão${size ? ` ${size}` : ''}`;
+    case 'crib':
+      return s.portable ? 'Berço portátil' : s.chest ? 'Berço com cômoda' : 'Berço';
     case 'bed':
-      return `${s.box ? 'Cama box' : 'Cama'}${size ? ` ${size}` : ''}`;
+      return `${s.headboardOnly ? 'Cabeceira' : s.box ? 'Cama box' : s.house ? 'Cama casinha' : s.montessori ? 'Cama montessoriana' : 'Cama'}${size ? ` ${size}` : ''}`;
     case 'tv':
       return `${s.monitor ? 'Monitor' : 'TV'}${s.screenIn ? ` ${s.screenIn}"` : ''}`;
     case 'fridge':
@@ -1100,11 +1207,11 @@ export function specTitle(spec) {
       if (s.tanquinho) return 'Tanquinho';
       return s.dryer ? 'Lava e seca' : 'Lavadora';
     case 'dresser':
-      return `${s.sideboard ? 'Buffet' : 'Cômoda'}${s.drawers ? ` ${plural(s.drawers, 'gaveta', 'gavetas')}` : ''}`;
+      return `${s.sideboard ? 'Buffet' : s.shoeCabinet ? 'Sapateira' : 'Cômoda'}${s.drawers && !s.shoeCabinet ? ` ${plural(s.drawers, 'gaveta', 'gavetas')}` : ''}${s.changer ? ' com trocador' : ''}`;
     case 'nightstand':
       return `Criado-mudo${s.drawers ? ` ${plural(s.drawers, 'gaveta', 'gavetas')}` : ''}`;
     case 'wardrobe':
-      return `Guarda-roupa${s.doors ? ` ${plural(s.doors, 'porta', 'portas')}` : ''}`;
+      return s.open ? 'Closet aberto' : `Guarda-roupa${s.doors ? ` ${plural(s.doors, 'porta', 'portas')}` : ''}`;
     case 'small_appliance':
       return APPLIANCE_LABEL[s.appliance] || 'Eletroportátil';
     case 'microwave':

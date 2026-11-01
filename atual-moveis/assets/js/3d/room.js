@@ -35,7 +35,7 @@ const PRESETS = {
   sala: {
     label: 'Sala de estar',
     floor: 'wood',
-    floorColor: '#c29468',
+    floorColor: '#b5875b',
     wall: '#eeeae3',
     sill: 0.95,
     kinds: ['sofa', 'armchair', 'coffee_table', 'side_table', 'rack', 'tv', 'shelf', 'pouf'],
@@ -43,7 +43,7 @@ const PRESETS = {
   quarto: {
     label: 'Quarto',
     floor: 'wood',
-    floorColor: '#b98c61',
+    floorColor: '#a97d55',
     wall: '#e7e9e4',
     sill: 0.95,
     kinds: ['bed', 'mattress', 'nightstand', 'dresser', 'wardrobe', 'crib', 'bunk_bed', 'desk', 'armchair', 'tv'],
@@ -109,6 +109,7 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const dec = (v, min = 1, max = 2) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: min, maximumFractionDigits: max });
 const parseDec = (s) => Number(String(s).trim().replace(/\s|m$/gi, '').replace(',', '.'));
 const cmOf = (m) => Math.round(m * 100);
+const r4 = (v) => Math.round(v * 10000) / 10000 || 0;
 const newUid = () => Math.random().toString(36).slice(2, 10);
 const lowerFirst = (s) => (/^[A-ZÀ-Ý]{2}/.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1));
 function normAngle(a) {
@@ -329,9 +330,7 @@ const I = {
   cart: svgI(`<path d="M2.5 3.5h2.4l2.5 11.1a1.4 1.4 0 0 0 1.4 1.1h8.9a1.4 1.4 0 0 0 1.4-1.1l1.7-7.4H5.9" ${ST}/><circle cx="9.4" cy="19.6" r="1.3" fill="currentColor"/><circle cx="17.1" cy="19.6" r="1.3" fill="currentColor"/><path d="M13 8.3v4.6M10.7 10.6h4.6" ${ST}/>`),
   plus: svgI(`<path d="M12 5v14M5 12h14" ${ST}/>`),
   minus: svgI(`<path d="M5 12h14" ${ST}/>`),
-  check: svgI(`<path d="m5 12.5 4.5 4.5L19 7.5" ${ST}/>`),
   warn: svgI(`<path d="M12 3.8 2.8 19.8h18.4z" ${ST}/><path d="M12 10v4.6" ${ST}/><circle cx="12" cy="17.2" r="1" fill="currentColor"/>`),
-  hand: svgI(`<path d="M8.5 11V5.8a1.5 1.5 0 0 1 3 0V11m0-1.2V4.6a1.5 1.5 0 0 1 3 0v5.6m0-.4V6.4a1.5 1.5 0 0 1 3 0v7.2c0 3.8-2.4 6.4-6 6.4-2.6 0-4-1.2-5.4-3.4l-2.2-3.6a1.5 1.5 0 0 1 2.4-1.8l1.2 1.6" ${ST}/>`),
 };
 
 /* ================================================================== */
@@ -475,8 +474,10 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       <canvas class="rm-canvas" data-rm-canvas aria-hidden="true"></canvas>
       <svg class="rm-svg" data-rm-svg aria-hidden="true"></svg>
       <button type="button" class="rm-rot" data-rm-rot hidden aria-label="Girar o item (arraste para girar livremente)" title="Arraste para girar">${I.rotate}</button>
-      <div class="rm-alert" data-rm-alert role="status" aria-live="polite" hidden></div>
-      <div class="rm-note" data-rm-note role="status" aria-live="polite" hidden></div>
+      <div class="rm-flash">
+        <div class="rm-alert" data-rm-alert role="status" aria-live="polite" hidden></div>
+        <div class="rm-note" data-rm-note role="status" aria-live="polite" hidden></div>
+      </div>
       <div class="rm-empty" data-rm-empty hidden>
         <div class="rm-empty__card">
           <span class="rm-empty__icon">${I.cube}</span>
@@ -573,6 +574,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.autoUpdate = false; // a sombra só muda quando o ambiente muda (não ao girar a câmera)
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color('#e9e6e1');
@@ -584,7 +586,8 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     scene.add(new THREE.HemisphereLight(0xffffff, 0xd8cfc2, 0.4));
     sun = new THREE.DirectionalLight(0xfff4e6, 1.55);
     sun.castShadow = true;
-    const small = Math.min(stageEl.clientWidth, stageEl.clientHeight) < 600;
+    // seção ainda escondida (0 x 0): usa o tamanho da janela para escolher a resolução da sombra
+    const small = Math.min(stageEl.clientWidth || innerWidth, stageEl.clientHeight || innerHeight) < 600;
     sun.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.02;
@@ -638,6 +641,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     // toque: um dedo move o item (não gira), dois dedos giram e aproximam
     controls.touches = { ONE: -1, TWO: THREE.TOUCH.DOLLY_ROTATE };
     controls.addEventListener('change', onControls);
+    controls.addEventListener('start', onControlsStart);
     fit3D();
     fitPlan();
 
@@ -816,6 +820,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     sc.far = R * 9 + 8;
     sc.updateProjectionMatrix();
     scene.add(roomG);
+    shadowsDirty();
   }
 
   function addWindow(group, o) {
@@ -833,9 +838,12 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     glass.receiveShadow = false;
     // peitoril de mármore por dentro e por fora
     slab(group, o.a - 0.05, o.b + 0.05, o.y0 - 0.025, o.y0, -T - 0.02, 0.035, kit.mat.marble('#ece8e1'));
-    // vista lá fora (céu e jardim)
-    const sky = new THREE.Mesh(new THREE.PlaneGeometry(o.b - o.a + 2.4, o.y1 - o.y0 + 1.8), M.sky);
-    sky.position.set(mid, (o.y0 + o.y1) / 2 + 0.2, -T - 0.8);
+    // vista lá fora (céu e jardim): painel logo atrás da parede, menor que ela para não aparecer por cima
+    const H = st.room.h;
+    const y0 = Math.max(0.05, o.y0 - 0.6);
+    const y1 = Math.min(H - 0.15, o.y1 + 0.3);
+    const sky = new THREE.Mesh(new THREE.PlaneGeometry(o.b - o.a + 0.8, y1 - y0), M.sky);
+    sky.position.set(mid, (y0 + y1) / 2, -T - 0.05);
     group.add(sky);
   }
 
@@ -930,11 +938,14 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     const c = new THREE.Vector3(0, H * 0.26, 0);
     const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
     const up = new THREE.Vector3().crossVectors(dir, right).normalize();
-    const tv = Math.tan(THREE.MathUtils.degToRad(cam3.fov) / 2) / 1.03;
+    const tv = Math.tan(THREE.MathUtils.degToRad(cam3.fov) / 2) / 1.05;
     const th = tv * cam3.aspect;
     let dist = 0;
-    for (const x of [-W / 2 - T, W / 2 + T]) {
-      for (const z of [-D / 2 - T, D / 2 + T]) {
+    // inclui a régua do piso, que fica do lado de fora das paredes
+    const mx = W / 2 + T + 0.3;
+    const mz = D / 2 + T + 0.3;
+    for (const x of [-mx, mx]) {
+      for (const z of [-mz, mz]) {
         // paredes do lado da câmera ficam recortadas: conta só a altura baixa
         const top = x * dir.x + z * dir.z > 0 ? STUB_H : H;
         for (const y of [0, top]) {
@@ -955,30 +966,31 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     cam3.updateProjectionMatrix();
     controls.update();
   }
+  // Planta: enquadra o ambiente (com espaço para as cotas) na área livre entre o aviso e o cartão do item
   function fitPlan() {
     const { w: W, d: D } = st.room;
-    const hw = W / 2 + T + 0.6;
-    const hd = D / 2 + T + 0.6;
-    const a = cw / ch;
-    let fw;
-    let fh;
-    if (hw / hd > a) {
-      fw = hw;
-      fh = hw / a;
-    } else {
-      fh = hd;
-      fw = hd * a;
-    }
-    camP.left = -fw;
-    camP.right = fw;
-    camP.top = fh;
-    camP.bottom = -fh;
+    const hw = W / 2 + T + 0.45;
+    const hd = D / 2 + T + 0.45;
+    const topI = 40;
+    const botI = !selEl.hidden ? Math.min(ch * 0.4, selEl.offsetHeight + 16) : !hintEl.hidden ? 36 : 10;
+    const avail = Math.max(80, ch - topI - botI);
+    const k = Math.min(cw / (2 * hw), avail / (2 * hd)); // pixels por metro
+    const top = (topI + avail / 2) / k;
+    camP.left = -cw / (2 * k);
+    camP.right = cw / (2 * k);
+    camP.top = top;
+    camP.bottom = top - ch / k;
     camP.position.set(0, 25, 0);
     camP.up.set(0, 0, -1);
     camP.lookAt(0, 0, 0);
     camP.near = 0.1;
     camP.far = 60;
     camP.updateProjectionMatrix();
+  }
+  // até a pessoa girar/aproximar, a câmera se reenquadra quando o palco muda de tamanho
+  let userMoved = false;
+  function onControlsStart() {
+    userMoved = true;
   }
   function onControls() {
     // mantém o alvo dentro do ambiente ao arrastar com o botão direito
@@ -992,15 +1004,23 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
 
   /* ---------- Renderização sob demanda ---------- */
   let raf = 0;
+  let frames = 0;
+  let lastMs = 0;
+  const shadowsDirty = () => {
+    if (renderer) renderer.shadowMap.needsUpdate = true;
+  };
   function invalidate() {
     if (!raf && alive && ready) raf = requestAnimationFrame(frame);
   }
   function frame() {
     raf = 0;
     if (!alive || !renderer) return;
+    frames++;
     if (st.view === '3d') controls.update();
     updateCut();
+    const t0 = performance.now();
     renderer.render(scene, cam());
+    lastMs = Math.round((performance.now() - t0) * 10) / 10;
     drawOverlay();
   }
   function updateCut() {
@@ -1092,6 +1112,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     if (!alive || it.ver !== ver || !items.includes(it)) return;
     it.body.clear();
     it.body.add(res.group);
+    shadowsDirty();
     it.size = { w: Math.max(0.02, res.size.w / 100), h: Math.max(0.01, res.size.h / 100), d: Math.max(0.02, res.size.d / 100) };
     it.loaded = true;
     refreshHelpers(it);
@@ -1125,7 +1146,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     hole.closePath();
     shape.holes.push(hole);
     const fg = new THREE.ShapeGeometry(shape);
-    fg.rotateX(HALF_PI); // plano XY -> piso (Y da forma vira +Z)
+    fg.rotateX(-HALF_PI); // plano XY -> piso, face para cima
     it.frame = new THREE.Mesh(fg, M.framePlan);
     it.frame.position.y = 0.004;
     it.frame.renderOrder = 3;
@@ -1153,6 +1174,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
   function apply(it) {
     it.obj.position.set(it.x, it.y, it.z);
     it.obj.rotation.y = it.rot;
+    shadowsDirty();
   }
 
   // TV/eletroportátil sobem no móvel que estiver embaixo do centro
@@ -1203,7 +1225,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     }
     nx = ex * 2 > W ? 0 : clamp(nx, -W / 2 + ex, W / 2 - ex);
     nz = ez * 2 > D ? 0 : clamp(nz, -D / 2 + ez, D / 2 - ez);
-    return [nx, nz];
+    return [r4(nx), r4(nz)];
   }
 
   function moveTo(it, x, z, { snap = true, commit = true } = {}) {
@@ -1240,6 +1262,10 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       k.rot = normAngle(k.rot + delta);
     }
     it.rot = r;
+    for (const k of kids) {
+      k.x = r4(k.x);
+      k.z = r4(k.z);
+    }
     const [nx, nz] = constrain(it, it.x, it.z, false);
     for (const k of kids) {
       k.x += nx - it.x;
@@ -1313,7 +1339,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
         for (let t = -r; t <= r + 1e-6; t += 0.1) pts.push([t, -r], [t, r], [-r, t], [r, t]);
         pts.sort((a, b) => Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]));
       }
-      for (const [x, z] of pts) if (freeAt(it, x, z, 0)) return { x, z, rot: 0 };
+      for (const [x, z] of pts) if (freeAt(it, x, z, 0, { pad: 0.12 })) return { x, z, rot: 0 };
     }
     return null;
   }
@@ -1363,7 +1389,8 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       const i = pref.indexOf(s.spec.kind);
       return i < 0 ? 99 : i;
     };
-    const sups = items.filter((s) => s !== it && isSurface(s) && it.size.w <= s.size.w + 0.02).sort((a, b) => rank(a) - rank(b));
+    // a TV pode passar um pouco das laterais do móvel (a base dela é mais estreita que a tela)
+    const sups = items.filter((s) => s !== it && isSurface(s) && it.size.w <= s.size.w * 1.12 + 0.08).sort((a, b) => rank(a) - rank(b));
     for (const s of sups) {
       const lim = Math.max(0, (s.size.w - it.size.w) / 2);
       for (const t of sweep(lim, 0.05)) {
@@ -1452,6 +1479,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     items.splice(i, 1);
     it.ver++;
     itemsG.remove(it.obj);
+    shadowsDirty();
     for (const h of [it.frame, it.edges]) h?.geometry.dispose();
     for (const k of items) {
       if (k.on === it.uid) {
@@ -1469,6 +1497,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       for (const h of [it.frame, it.edges]) h?.geometry.dispose();
     }
     items.length = 0;
+    shadowsDirty();
     select(null);
     changed();
   }
@@ -1665,11 +1694,15 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
   }
 
   function renderSel() {
+    const focused = selEl.contains(document.activeElement) ? document.activeElement : null;
+    const wasHidden = selEl.hidden;
     if (!sel) {
       selEl.hidden = true;
       selEl.innerHTML = '';
       rotBtn.hidden = true;
       hintEl.hidden = false;
+      if (focused) stageEl.focus({ preventScroll: true });
+      if (!wasHidden && st.view === 'plan') fitPlan();
       return;
     }
     const it = sel;
@@ -1705,6 +1738,12 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       </div>`;
     selEl.hidden = false;
     hintEl.hidden = true;
+    if (focused) {
+      const d = focused.dataset;
+      const q = d.rmAct ? `[data-rm-act="${d.rmAct}"]` : d.rmVariant ? `[data-rm-variant="${CSS.escape(d.rmVariant)}"]` : null;
+      (q && selEl.querySelector(q))?.focus({ preventScroll: true });
+    }
+    if (wasHidden && st.view === 'plan') fitPlan();
   }
 
   function select(it) {
@@ -1724,7 +1763,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       st.view === 'plan'
         ? 'Planta vista de cima · arraste um item para mover'
         : coarse
-          ? 'Arraste um item com um dedo · use dois dedos para girar e aproximar'
+          ? 'Um dedo move o item · dois dedos giram e aproximam'
           : 'Arraste um item para mover · arraste o fundo para girar a vista · role para aproximar';
   }
   function setView(v) {
@@ -1853,8 +1892,9 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     if (!t || !root.contains(t)) return;
     const d = t.dataset;
     if (d.rmAdd) {
+      const hadFocus = document.activeElement === t;
       add(d.rmAdd);
-      if (matchMedia('(max-width: 820px)').matches) stageEl.scrollIntoView?.({ block: 'nearest' });
+      if (hadFocus) listEl.querySelector(`[data-rm-add="${CSS.escape(d.rmAdd)}"]`)?.focus({ preventScroll: true });
     } else if (d.rmAct && sel) {
       if (d.rmAct === 'desel') select(null);
       else if (d.rmAct === 'rot-l') rotateStep(sel, 1);
@@ -1896,6 +1936,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
         return;
       }
       setRoom({ [t.dataset.rmDim]: v });
+      t.value = dec(st.room[t.dataset.rmDim], 1, 2);
     }
   }
   function onInput(e) {
@@ -1918,6 +1959,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
   }
   function onKey(e) {
     const t = e.target;
+    if (!(t instanceof Element) || (t !== document.body && !root.contains(t)) || host.hidden) return;
     if (t.closest('input, select, textarea, [contenteditable]')) {
       if (e.key === 'Escape' && !sizePop.hidden && t.closest('.rm-pop')) {
         toggleSize(false);
@@ -2011,8 +2053,13 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       const hits = ray.intersectObject(c.it.body, true);
       if (hits.length && (!best || hits[0].distance < best.d)) best = { it: c.it, d: hits[0].distance, point: hits[0].point.clone() };
     }
-    if (best) return best;
-    return { it: cands[0].it, d: cands[0].d, point: ray.ray.at(cands[0].d, new THREE.Vector3()) };
+    const hit = best || { it: cands[0].it, d: cands[0].d, point: ray.ray.at(cands[0].d, new THREE.Vector3()) };
+    // item selecionado "preso" dentro de outro: ele tem prioridade para poder ser arrastado para fora
+    if (sel && hit.it !== sel && pairs.some(([a, b]) => (a === sel && b === hit.it) || (a === hit.it && b === sel))) {
+      const c = cands.find((x) => x.it === sel);
+      if (c) return { it: sel, d: c.d, point: ray.ray.at(c.d, new THREE.Vector3()) };
+    }
+    return hit;
   }
   function floorPoint(e, y = 0) {
     setRay(e);
@@ -2231,7 +2278,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     v: 1,
     preset: st.preset,
     room: st.room,
-    items: items.map((it) => ({ pid: it.pid, variant: it.variant, x: Math.round(it.x * 1000) / 1000, z: Math.round(it.z * 1000) / 1000, rot: Math.round(it.rot * 10000) / 10000 })),
+    items: items.map((it) => ({ pid: it.pid, variant: it.variant, x: r4(it.x), z: r4(it.z), rot: r4(it.rot) })),
   });
   function save(now = false) {
     clearTimeout(saveT);
@@ -2244,8 +2291,11 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       if (!s || !entryById[s.pid]) continue;
       createItem(s.pid, { variant: s.variant || null, x: num(s.x), z: num(s.z), rot: num(s.rot) });
     }
-    for (const it of items) [it.x, it.z] = constrain(it, it.x, it.z, false);
-    for (const it of items) apply(it);
+    const { w: W, d: D } = st.room;
+    for (const it of items) {
+      if (Math.abs(it.x) > W / 2 || Math.abs(it.z) > D / 2) [it.x, it.z] = constrain(it, it.x, it.z, false);
+      apply(it);
+    }
     settleAll();
   }
 
@@ -2255,6 +2305,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
         if (!alive) return;
         measureStage();
         if (ready && !failed) {
+          if (!userMoved) fit3D(cam3.position.clone().sub(controls.target));
           fitPlan();
           invalidate();
         }
@@ -2266,7 +2317,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
   root.addEventListener('input', onInput);
-  root.addEventListener('keydown', onKey);
+  document.addEventListener('keydown', onKey);
   document.addEventListener('pointerdown', onDocDown, true);
   rotBtn.addEventListener('pointerdown', onRotDown);
   rotBtn.addEventListener('pointermove', onRotMove);
@@ -2304,13 +2355,14 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     root.removeEventListener('click', onClick);
     root.removeEventListener('change', onChange);
     root.removeEventListener('input', onInput);
-    root.removeEventListener('keydown', onKey);
+    document.removeEventListener('keydown', onKey);
     canvas.removeEventListener('pointerdown', onDown);
     canvas.removeEventListener('pointermove', onMove);
     canvas.removeEventListener('pointerup', onUp);
     canvas.removeEventListener('pointercancel', onUp);
     canvas.removeEventListener('lostpointercapture', onLost);
     controls?.removeEventListener('change', onControls);
+    controls?.removeEventListener('start', onControlsStart);
     controls?.dispose();
     for (const it of items) {
       it.ver++;
@@ -2366,12 +2418,23 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
         const r = canvas.getBoundingClientRect();
         return { x: r.left + p.x, y: r.top + p.y };
       },
-      floorToScreen(x, z) {
-        const p = toScreen(x, 0, z);
+      floorToScreen(x, z, y = 0) {
+        const p = toScreen(x, y, z);
         const r = canvas.getBoundingClientRect();
         return { x: r.left + p.x, y: r.top + p.y };
       },
-      state: () => ({ room: { ...st.room }, preset: st.preset, view: st.view, selected: sel?.uid || null, walls: walls.map((w) => ({ id: w.id, cut: w.cut })), pairs: pairs.length }),
+      state: () => ({
+        room: { ...st.room },
+        preset: st.preset,
+        view: st.view,
+        selected: sel?.uid || null,
+        walls: walls.map((w) => ({ id: w.id, cut: w.cut })),
+        pairs: pairs.length,
+        frames,
+        lastMs,
+        camDist: cam3 && controls ? Math.round(cam3.position.distanceTo(controls.target) * 1000) / 1000 : null,
+        camAz: cam3 && controls ? Math.round(THREE.MathUtils.radToDeg(Math.atan2(cam3.position.x - controls.target.x, cam3.position.z - controls.target.z))) : null,
+      }),
       orbit(azDeg, elDeg) {
         if (!ready || st.view !== '3d') return;
         const az = THREE.MathUtils.degToRad(azDeg);

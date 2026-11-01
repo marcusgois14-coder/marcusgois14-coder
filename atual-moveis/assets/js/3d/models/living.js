@@ -26,6 +26,14 @@ const DEF_WOOD = { coffee_table: '#a0663b', side_table: '#a0663b', dining_table:
 const BOOK_COLORS = ['#7a2f2a', '#2f4a5c', '#c9b58f', '#3d5a40', '#e5ded2', '#8a6a4a', '#1f1f1f', '#b5703a', '#d8cba0', '#5c6b73', '#a33b2f', '#26364a', '#6d5a7a', '#efe9df'];
 const R2 = { r: 0.0025, seg: 2 }; // cantos suaves para placas
 const PULL_DEPTH = { bar: 0.028, knob: 0.027, leather_strap: 0.027, cutout: 0.003, profile: 0.012, none: 0 };
+// Palavras de metal no nome; e as que só descrevem pés/base/estrutura
+const METAL_WORD = / (metal|metalic[oa]s?|aco|ferro|aluminio|tubular|cromad[oa]s?|inox|metalon) /;
+const METAL_LEGS = / (pes|pe|base|bases|estrutura|pernas?|armacao)( (de|em))? (metal|metalic[oa]s?|aco( carbono)?|ferro|aluminio|metalon|tubular|cromad[oa]s?)(?= )/g;
+const METALLIC_WORD = / (inox|aco inox|aco escovado|escovado|cromad[oa]|cromo|dourad[oa]|ouro|gold|prata|prateado|prateada|bronze|cobre|rose gold|champagne|champanhe) /;
+function legsOnlyMetal(label) {
+  const rest = label.replace(METAL_LEGS, ' ');
+  return rest !== label && !METAL_WORD.test(rest);
+}
 
 function ctx(spec, kit, THREE) {
   const st = spec.style || {};
@@ -35,6 +43,15 @@ function ctx(spec, kit, THREE) {
   c.has = (re) => re.test(c.label);
   c.words = findColorWords(spec.label || ''); // cores citadas no nome ("Off White e Freijó")
   c.mt = spec.material;
+  // metal só nos pés/base ("Rack ... Pés de Metal", "Aparador ... Estrutura Metálica"): o corpo é MDF/madeira
+  if ((c.mt === 'metal' || c.mt === 'steel') && legsOnlyMetal(c.label)) c.mt = c.has(/ madeira | macic/) ? 'wood' : 'mdf';
+  // segunda cor depois de uma madeira ("Carvalho e Preto"): vai para a estrutura (pés, saia) e as frentes
+  const w2 = c.words.slice(1).find((w) => !w.wood && !METALLIC_WORD.test(` ${w.word} `) && w.hex !== String(C.main).toLowerCase());
+  c.second = st.woodLook && c.words[0]?.wood && w2 ? w2.hex : null;
+  if (c.second) {
+    c.secondMat = kit.mat.paint(c.second, { gloss: 0.25 });
+    c.secondMetal = kit.mat.metal(c.second, { finish: 'painted' });
+  }
   if (spec.kind === 'kitchen_cabinet' && c.has(/ (cuba|pia|tampo|bancada)( de| em)? inox /)) {
     // "cuba inox": o inox é da cuba/tampo, o corpo segue o padrão (MDF branco) se nenhuma outra cor foi citada
     if (c.mt === 'steel') c.mt = 'mdf';
@@ -54,7 +71,9 @@ function ctx(spec, kit, THREE) {
 // Madeiras escuras: relevo do veio mais suave (o relevo fino reflete o ambiente e vira pontilhado)
 const darkRelief = (kit, color) => (kit.luminance(color) < 0.3 ? 0.4 : undefined);
 function woodMat(c, color, grain = 'oak') {
-  return c.m.wood(color, { grain, relief: darkRelief(c.kit, color) });
+  // demolição: relevo mais contido (o relevo cheio vira um pontilhado de espuma nas bordas)
+  const relief = grain === 'rustic' ? Math.min(0.55, darkRelief(c.kit, color) ?? 1) : darkRelief(c.kit, color);
+  return c.m.wood(color, { grain, relief });
 }
 // Madeira de demolição: um pouco menos saturada (envelhecida), como nas fotos reais
 const aged = (c, color) => c.kit.mix(color, '#8a7a62', 0.3);
@@ -215,6 +234,59 @@ function ring(c, ri, ro, y0, y1, mat, seg = 48) {
   return c.kit.lathe([[ri, y0], [ro, y0], [ro, y1], [ri, y1], [ri, y0]], mat, { seg });
 }
 
+// Madeira de demolição: a textura tem emendas de tábua a cada 1/3 do tile (10 cm). Numa face estreita
+// (borda de tampo, coluna, sapata) uma emenda no meio parece placa colada; aqui as faces cuja direção V
+// é curta (< 9 cm) são deslocadas em V para caber no meio de uma tábua só. As faces largas não mudam.
+function calmSeams(geo, tv) {
+  const pos = geo.attributes.position;
+  const uv = geo.attributes.uv;
+  const groups = { x: [], y: [], z: [] };
+  const AX = ['x', 'y', 'z'];
+  const get = (i, a) => (a === 'x' ? pos.getX(i) : a === 'y' ? pos.getY(i) : pos.getZ(i));
+  for (let i = 0; i + 2 < pos.count; i += 3) {
+    // eixo do mundo que o V acompanha neste triângulo (V = (eixo + deslocamento) / tv)
+    let found = null;
+    for (const a of AX) {
+      let ok = true;
+      let moves = false;
+      for (const [p, q] of [[i, i + 1], [i + 1, i + 2]]) {
+        const dv = (uv.getY(q) - uv.getY(p)) * tv;
+        const da = get(q, a) - get(p, a);
+        if (Math.abs(dv - da) > 1e-4) ok = false;
+        if (Math.abs(da) > 1e-5) moves = true;
+      }
+      if (ok && moves) {
+        found = a;
+        break;
+      }
+    }
+    if (found) groups[found].push(i);
+  }
+  for (const a of AX) {
+    const tris = groups[a];
+    if (!tris.length) continue;
+    let lo = Infinity;
+    let hi = -Infinity;
+    let vlo = Infinity;
+    let vhi = -Infinity;
+    for (const i of tris) {
+      for (let k = 0; k < 3; k++) {
+        lo = Math.min(lo, get(i + k, a));
+        hi = Math.max(hi, get(i + k, a));
+        vlo = Math.min(vlo, uv.getY(i + k));
+        vhi = Math.max(vhi, uv.getY(i + k));
+      }
+    }
+    if (hi - lo > 0.09) continue;
+    const vc = (vlo + vhi) / 2;
+    const base = Math.floor(vc);
+    const band = Math.floor((vc - base) * 3);
+    const shift = base + (band + 0.5) / 3 - vc;
+    for (const i of tris) for (let k = 0; k < 3; k++) uv.setY(i + k, uv.getY(i + k) + shift);
+  }
+  uv.needsUpdate = true;
+}
+
 // Junta as malhas de mesmo material e mesma parte numa só (menos chamadas de desenho no celular e
 // .glb menor). O vidro fica separado para a ordenação da transparência. kit.recolor continua valendo.
 const KEEP_ATTRS = ['position', 'normal', 'uv'];
@@ -245,6 +317,8 @@ function consolidate(c, g) {
       const src = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry;
       const geo = new THREE.BufferGeometry();
       for (const a of KEEP_ATTRS) geo.setAttribute(a, src.attributes[a].clone());
+      const ud = o.material?.userData;
+      if (ud?.type === 'wood' && ud.opts?.grain === 'rustic') calmSeams(geo, ud.tile?.[1] || 0.3);
       geo.applyMatrix4(o.matrixWorld);
       return geo;
     });
@@ -277,10 +351,14 @@ function legKind(c, fallback = 'tapered') {
   if (st.legs === 'turned') return 'turned';
   if (st.legs === 'metal' || st.industrial) return c.has(/ hairpin | grampo /) ? 'metal_hairpin' : 'metal_square';
   if (st.legs === 'hidden') return 'none';
+  // "pés de madeira": cônicos (no estilo retrô, palito)
+  if (st.legs === 'wood') return fallback === 'palito' || fallback === 'turned' ? fallback : 'tapered';
   return fallback;
 }
 const isMetalLeg = (t) => String(t).startsWith('metal');
-const legMatOf = (c, type) => (isMetalLeg(type) ? c.metal : c.wood);
+// Pés na segunda cor do nome ("Carvalho e Preto"), senão madeira/metal
+// (palito e torneado são sempre de madeira)
+const legMatOf = (c, type) => (c.second && type !== 'palito' && type !== 'turned' ? (isMetalLeg(type) ? c.secondMetal : c.secondMat) : isMetalLeg(type) ? c.metal : c.wood);
 const SPLAY = { palito: 0.13 };
 // Quanto o pé avança para fora (em x e em z) além do centro do topo
 function legReach(type, h, r, splay = 0) {
@@ -414,7 +492,8 @@ function frontStyle(c, fallback = 'flat') {
 function caseRow(c, g, o) {
   const t = o.t ?? 0.018;
   const mat = o.mat || c.body;
-  const fm = o.frontMat || mat;
+  // frentes na segunda cor do nome ("Freijó e Off White": corpo freijó, portas off white)
+  const fm = o.frontMat || (c.second ? c.secondMat : mat);
   const inner = o.inner || innerMat(c, mat);
   const ft = o.ft ?? 0.018;
   const { x0, x1, y0, y1, zb, zf } = o;
@@ -680,6 +759,8 @@ function fillCompartment(c, g, { x0, x1, y, h, zb, zf, density = 1 }) {
 /* ================================================================== */
 /* Mesas                                                               */
 /* ================================================================== */
+// Base cilíndrica/tambor sem formato no nome: tampo redondo (ou oval) sobre tambor
+const isDrum = (c) => !c.st.shape && c.has(/ cilindr| tambor /);
 const isNesting = (c) => !!(c.st.nesting || c.has(/ ninho | nesting | conjunto (de )?(2|3|duas|tres) mesas | kit (com )?(2|3) mesas | par de mesas | (2|3) mesas de (centro|apoio|canto) /));
 
 // Mesa de madeira maciça "em bloco": tampo grosso, prateleira inferior, colunas nos cantos com
@@ -699,8 +780,10 @@ function blockTable(c, g) {
   const rf = Math.max(0.006, Math.min(oh * 0.36, (W - 2 * px) * 0.2, (D - 2 * pz) * 0.2, 0.07));
   const pr = Math.min(0.025, W * 0.03, D * 0.03);
   // tampo e prateleira inteiros
-  g.add(c.kit.place(plate(c, rrect(THREE, W, D, pr), tt, body, { bevel: Math.min(0.012, tt * 0.2) }), { y: yt }));
-  g.add(c.kit.place(plate(c, rrect(THREE, W, D, pr), bt, body, { bevel: Math.min(0.006, bt * 0.14) }), { y: fh }));
+  const tb = Math.min(0.012, tt * 0.2);
+  const bb = Math.min(0.006, bt * 0.14);
+  g.add(c.kit.place(plate(c, rrect(THREE, W, D, pr), tt, body, { bevel: tb }), { y: yt }));
+  g.add(c.kit.place(plate(c, rrect(THREE, W, D, pr), bt, body, { bevel: bb }), { y: fh }));
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       const xo = (sx * W) / 2;
@@ -714,7 +797,8 @@ function blockTable(c, g) {
       // coluna com o canto externo arredondado como o tampo (contorno em x, -z)
       const radii = [0, 0, 0, 0];
       radii[sz > 0 ? (sx > 0 ? 1 : 0) : sx > 0 ? 2 : 3] = pr;
-      g.add(c.kit.place(plate(c, rectShape(THREE, x0, x1, -z1, -z0, radii), oh + 0.004, body, { bevel: 0.002, grain: 'y', seg: 8 }), { y: yb - 0.002 }));
+      // a coluna entra no arredondado do tampo e da prateleira: a quina externa fica contínua (peça única)
+      g.add(c.kit.place(plate(c, rectShape(THREE, x0, x1, -z1, -z0, radii), oh + tb + bb, body, { bevel: 0.0015, grain: 'y', seg: 8 }), { y: yb - bb }));
       // cantos curvos da abertura da frente/fundo (ao longo de z) e das pontas (ao longo de x)
       g.add(prismZ(c, filletPts(xi, yb, rf, -sx, 1), z0, z1, body));
       g.add(prismZ(c, filletPts(xi, yt, rf, -sx, -1), z0, z1, body));
@@ -749,7 +833,8 @@ function classicTable(c, g, kind, opt = {}) {
     g.add(boxAt(c, -W / 2 + 0.05, W / 2 - 0.05, 0, legH + 0.001, -D / 2 + 0.05, D / 2 - 0.05, c.body));
     return;
   }
-  const r = opt.r ?? (dining ? clamp(H * 0.032, 0.018, 0.03) : clamp(Math.min(W, D) * 0.045, 0.013, type === 'palito' ? 0.022 : 0.024));
+  // mesa de jantar grande pede pés mais grossos (220 x 100 não fica em pés de 4 cm)
+  const r = opt.r ?? (dining ? clamp(Math.max(H * 0.032, Math.min(W, D) * 0.03) * (type === 'turned' ? 1.15 : 1), 0.018, 0.04) : clamp(Math.min(W, D) * 0.045, 0.013, type === 'palito' ? 0.022 : 0.024));
   const splay = SPLAY[type] || 0;
   const reach = legReach(type, legH, r, splay);
   const ov = dining ? clamp(Math.min(W, D) * 0.05, 0.02, 0.06) : clamp(Math.min(W, D) * 0.04, 0.012, 0.035);
@@ -768,7 +853,7 @@ function classicTable(c, g, kind, opt = {}) {
   const at = 0.02;
   const ay1 = H - tt;
   const ay0 = ay1 - ah;
-  const apronMat = glass ? (type.startsWith('metal') ? c.metal : c.wood) : c.body;
+  const apronMat = glass ? (type.startsWith('metal') ? c.metal : c.wood) : c.secondMat || c.body;
   const ex = hx + r - 0.006; // face externa da saia
   const ez = hz + r - 0.006;
   const isNiche = st.niche && !drawers && !dining;
@@ -853,7 +938,7 @@ const C_WOOD = (c) => (String(c.C.wood).toLowerCase() === '#1f1f1f' ? '#a0663b' 
 // Tampo de móvel com estrutura metálica: madeira quando o corpo é metal ou cor escura (é a cor do metal)
 function frameTop(c) {
   if (isGlass(c) || isMarble(c) || c.st.woodLook) return topMat(c);
-  if (twoTone(c) || c.spec.material === 'metal' || c.spec.material === 'steel' || c.kit.luminance(c.C.main) < 0.2) return woodMat(c, C_WOOD(c), 'oak');
+  if (twoTone(c) || c.mt === 'metal' || c.mt === 'steel' || c.kit.luminance(c.C.main) < 0.2) return woodMat(c, C_WOOD(c), 'oak');
   return c.body;
 }
 
@@ -883,14 +968,17 @@ function roundTable(c, g, kind, opt = {}) {
     // tambor: corpo cilíndrico/oval recuado com rodapé escuro
     const ins = Math.max(0.02, R * 0.08);
     const shape = oval ? ellipseShape(THREE, W - 2 * ins, D - 2 * ins) : ellipseShape(THREE, 2 * (R - ins), 2 * (R - ins));
-    g.add(kit.place(plate(c, shape, legH - 0.03 + 0.002, c.body, { bevel: 0.003, seg: 64, grain: 'y' }), { y: 0.03 }));
+    // em pedra (travertino, mármore) o tambor é da mesma pedra do tampo
+    const dm = isMarble(c) && !st.woodLook ? tm : c.body;
+    g.add(kit.place(plate(c, shape, legH - 0.03 + 0.002, dm, { bevel: 0.003, seg: 64, grain: 'y' }), { y: 0.03 }));
     g.add(kit.place(plate(c, oval ? ellipseShape(THREE, W - 2 * ins - 0.04, D - 2 * ins - 0.04) : ellipseShape(THREE, 2 * (R - ins) - 0.04, 2 * (R - ins) - 0.04), 0.032, c.dark, { bevel: 0, seg: 48 }), { y: 0 }));
     return;
   }
   if (base === 'pedestal') {
     const colR = clamp(R * 0.12, 0.035, 0.08);
     const footR = clamp(R * 0.58, 0.18, 0.36);
-    const pm = c.has(/ tulipa | saarinen /) || st.legs === 'metal' ? c.metal : c.wood;
+    // base na cor do corpo (mesa preta/branca = base preta/branca; amadeirada = madeira)
+    const pm = c.has(/ tulipa | saarinen /) || st.legs === 'metal' || metalBase(c) ? c.metal : c.secondMat || c.body;
     const centers = oval ? [-(Math.max(W, D) / 2 - Math.min(W, D) / 2) * 0.55, (Math.max(W, D) / 2 - Math.min(W, D) / 2) * 0.55] : [0];
     if (oval) {
       // base única alongada sob as duas colunas
@@ -964,28 +1052,88 @@ function roundTable(c, g, kind, opt = {}) {
     g.add(kit.place(kit.cylinder(sR, sR, 0.018, c.body, { seg: 48 }), { y: ys + 0.009 }));
   }
 }
+// (sem lineTo antes de cada arco: o absarc já liga a reta; a reta explícita deixava pontos quase
+// repetidos, e o chanfro da extrusão virava um espinho de ~1 cm para fora da medida)
 function stadiumShape(THREE, w, d) {
   const s = new THREE.Shape();
   if (w >= d) {
     const r = d / 2;
     const a = w / 2 - r;
     s.moveTo(0, -r);
-    s.lineTo(a, -r);
     s.absarc(a, 0, r, -Math.PI / 2, Math.PI / 2, false);
-    s.lineTo(-a, r);
     s.absarc(-a, 0, r, Math.PI / 2, Math.PI * 1.5, false);
     s.lineTo(0, -r);
   } else {
     const r = w / 2;
     const a = d / 2 - r;
     s.moveTo(r, 0);
-    s.lineTo(r, a);
     s.absarc(0, a, r, 0, Math.PI, false);
-    s.lineTo(-r, -a);
     s.absarc(0, -a, r, Math.PI, Math.PI * 2, false);
     s.lineTo(r, 0);
   }
   return s;
+}
+
+// Contorno orgânico (seixo): círculo com ondulações suaves (determinísticas pela semente), normalizado
+// para caber exatamente em w x d. Devolve uma função (w, d) => THREE.Shape com o mesmo desenho.
+function organicOutline(c) {
+  const { THREE, r } = c;
+  const N = 120;
+  const a2 = 0.05 + r() * 0.05;
+  const a3 = 0.05 + r() * 0.04;
+  const a4 = 0.015 + r() * 0.02;
+  const p2 = r() * Math.PI * 2;
+  const p3 = r() * Math.PI * 2;
+  const p4 = r() * Math.PI * 2;
+  const raw = [];
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const rr = 1 + a2 * Math.cos(2 * a + p2) + a3 * Math.cos(3 * a + p3) + a4 * Math.cos(4 * a + p4);
+    raw.push([Math.cos(a) * rr, Math.sin(a) * rr]);
+  }
+  const xs = raw.map((p) => p[0]);
+  const ys = raw.map((p) => p[1]);
+  const x0 = Math.min(...xs);
+  const x1 = Math.max(...xs);
+  const y0 = Math.min(...ys);
+  const y1 = Math.max(...ys);
+  const unit = raw.map(([x, y]) => [(x - (x0 + x1) / 2) / (x1 - x0), (y - (y0 + y1) / 2) / (y1 - y0)]);
+  const shape = (w, d) => new THREE.Shape(unit.map(([x, y]) => new THREE.Vector2(x * w, y * d)));
+  // ponto do contorno na direção do ângulo a (para posicionar pés), escalado por k
+  const at = (a, w, d, k = 1) => {
+    const i = Math.round(((((a / (Math.PI * 2)) % 1) + 1) % 1) * N) % N;
+    return [unit[i][0] * w * k, -unit[i][1] * d * k];
+  };
+  return { shape, at };
+}
+// Mesa orgânica (centro/lateral): tampo grosso de cantos macios sobre base recuada do mesmo desenho,
+// ou sobre pés quando o nome pede (palito, metal, torneados)
+function organicTable(c, g, kind) {
+  const { kit, st, W, H, D } = c;
+  const o = organicOutline(c);
+  const tm = topMat(c);
+  const tt = clamp(H * 0.16, 0.035, 0.075);
+  const yTop = H - tt;
+  g.add(kit.place(plate(c, o.shape(W, D), tt, tm, { bevel: Math.min(0.018, tt * 0.38) }), { y: yTop }));
+  const type = st.legs && st.legs !== 'wood_base' && st.legs !== 'hidden' ? legKind(c, 'tapered') : 'none';
+  if (type === 'none') {
+    // base: mesmo contorno, recuada, com um friso escuro rente ao chão
+    const k = kind === 'side' ? 0.62 : 0.7;
+    g.add(kit.place(plate(c, o.shape(W * k, D * k), yTop - 0.012 + 0.003, c.body, { bevel: 0.004, grain: 'y' }), { y: 0.012 }));
+    g.add(kit.place(plate(c, o.shape(W * k - 0.03, D * k - 0.03), 0.013, c.dark, { bevel: 0 }), { y: 0 }));
+    return;
+  }
+  const r = clamp(Math.min(W, D) * 0.04, 0.013, 0.022);
+  const splay = SPLAY[type] || 0;
+  const n = st.legCount || (kind === 'side' ? 3 : 4);
+  for (let i = 0; i < n; i++) {
+    const a = n === 3 ? Math.PI / 2 + (i * Math.PI * 2) / 3 : Math.PI / 4 + (i * Math.PI) / 2;
+    const [x, z] = o.at(a, W, D, 0.62);
+    const len = Math.hypot(x, z) || 1;
+    const l = kit.leg(type, { h: yTop + 0.001, r, material: legMatOf(c, type), dir: [x / len, z / len], splay });
+    l.position.set(x, 0, z);
+    g.add(l);
+  }
 }
 
 // Conjunto ninho: duas mesas (a menor mais baixa, encaixada na frente da maior)
@@ -1075,7 +1223,8 @@ export function coffee_table(spec, kit, THREE) {
   const { st } = c;
   const base = st.base;
   if (isNesting(c)) nesting(c, g, 'coffee');
-  else if (st.shape === 'round' || st.shape === 'oval') roundTable(c, g, 'coffee');
+  else if (st.organic && !st.shape) organicTable(c, g, 'coffee');
+  else if (st.shape === 'round' || st.shape === 'oval' || isDrum(c)) roundTable(c, g, 'coffee', isDrum(c) ? { base: 'drum' } : {});
   else if (base === 'block' || (!base && (st.rustic || st.legs === 'wood_base'))) blockTable(c, g);
   else if (base === 'metal' || metalBase(c)) metalFrameTable(c, g, 'coffee');
   else classicTable(c, g, 'coffee');
@@ -1089,7 +1238,8 @@ export function side_table(spec, kit, THREE) {
   if (isNesting(c)) nesting(c, g, 'side');
   else if (st.console) consoleTable(c, g);
   else if (st.niche) nicheSideTable(c, g);
-  else if (st.shape === 'round' || st.shape === 'oval') roundTable(c, g, 'side');
+  else if (st.organic && !st.shape) organicTable(c, g, 'side');
+  else if (st.shape === 'round' || st.shape === 'oval' || isDrum(c)) roundTable(c, g, 'side', isDrum(c) ? { base: 'drum' } : {});
   else if (c.has(/ em c | formato c /) || st.base === 'c') cFrameSideTable(c, g);
   else if (metalBase(c)) metalFrameTable(c, g, 'side');
   else if (st.rustic || st.legs === 'wood_base') blockTable(c, g);
@@ -1123,7 +1273,9 @@ export function dining_table(spec, kit, THREE) {
   const g = kit.group('dining_table');
   const { st } = c;
   // as cadeiras ficam de fora: a caixa do modelo é a da mesa
-  if (st.shape === 'round' || st.shape === 'oval') roundTable(c, g, 'dining');
+  if (st.organic && !st.shape) roundTable(c, g, 'dining', { topShape: organicOutline(c).shape(c.W, c.D) });
+  else if (st.shape === 'round' || st.shape === 'oval') roundTable(c, g, 'dining');
+  else if (st.base === 'trestle' || c.has(/ (pes?|base) em x /)) trestleTable(c, g);
   else if (st.base === 'metal' || metalBase(c)) metalFrameTable(c, g, 'dining');
   else if (st.base === 'trestle' || st.legs === 'wood_base' || c.has(/ cavalete | pes? em x | base em x /)) trestleTable(c, g);
   else classicTable(c, g, 'dining');
@@ -1133,33 +1285,35 @@ export function dining_table(spec, kit, THREE) {
 // Mesa com base em painéis (pés laterais maciços) ligados por uma travessa
 function trestleTable(c, g) {
   const { THREE, kit, W, H, D } = c;
-  const tm = topMat(c);
+  const xLeg = c.has(/ em x /);
+  // base de metal quando o nome diz ("Base em X Metal Preto"); senão na cor do corpo (ou madeira)
+  const metal = c.spec.material === 'metal' || c.spec.material === 'steel' || c.has(/ (metal|metalic[oa]|ferro|aco) /);
+  const lm = metal ? c.metal : c.secondMat || c.body;
+  const tm = metal ? frameTop(c) : topMat(c);
   const tt = isGlass(c) ? 0.012 : clamp(H * 0.05, 0.03, 0.05);
   const yTop = H - tt;
   g.add(kit.place(plate(c, rrect(THREE, W, D, 0.01), tt, tm, { bevel: 0.005 }), { y: yTop }));
-  const lt = clamp(W * 0.035, 0.04, 0.07);
+  const lt = metal ? 0.03 : clamp(W * 0.035, 0.04, 0.07);
   const ld = D - clamp(D * 0.18, 0.1, 0.2);
   const lx = W / 2 - clamp(W * 0.12, 0.12, 0.3);
-  const xLeg = c.has(/ em x /);
   for (const sx of [-1, 1]) {
     if (xLeg) {
-      // pé em X (duas peças cruzadas no plano ZY)
-      const L = Math.hypot(ld, yTop) - 0.02;
-      const ang = Math.atan2(yTop, ld);
+      // pé em X: duas barras lado a lado no plano ZY, cortadas na horizontal no chão e sob o tampo
+      const bt = metal ? 0.05 : 0.07;
+      const bw = bt / Math.sin(Math.atan2(yTop, ld));
       for (const s of [-1, 1]) {
-        const b = kit.box(lt, 0.06, L, c.wood, { r: 0.004 });
-        b.rotation.x = s * ang;
-        b.position.set(sx * lx + s * lt * 0.51, yTop / 2, 0);
-        b.scale.set(1, 1, 1);
-        g.add(b);
+        const pts = s > 0 ? [[-ld / 2, 0], [-ld / 2 + bw, 0], [ld / 2, yTop], [ld / 2 - bw, yTop]] : [[ld / 2 - bw, 0], [ld / 2, 0], [-ld / 2 + bw, yTop], [-ld / 2, yTop]];
+        const x0 = sx * lx + (s > 0 ? -lt - 0.0005 : 0.0005);
+        g.add(prismX(c, pts, x0, x0 + lt, lm, { grain: 'y' }));
       }
     } else {
       const pts = [[-ld / 2, 0], [ld / 2, 0], [ld / 2, 0.04], [ld * 0.18, 0.08], [ld * 0.14, yTop - 0.06], [ld * 0.42, yTop - 0.02], [ld * 0.42, yTop], [-ld * 0.42, yTop], [-ld * 0.42, yTop - 0.02], [-ld * 0.14, yTop - 0.06], [-ld * 0.18, 0.08], [-ld / 2, 0.04]];
-      g.add(prismX(c, pts, sx * lx - lt / 2, sx * lx + lt / 2, c.wood, { grain: 'y' }));
+      g.add(prismX(c, pts, sx * lx - lt / 2, sx * lx + lt / 2, lm, { grain: 'y' }));
     }
   }
-  // travessa
-  g.add(boxAt(c, -lx, lx, yTop * 0.32, yTop * 0.32 + 0.07, -0.02, 0.02, c.wood, { r: 0.004 }));
+  // travessa (no X, passa no cruzamento)
+  const ty = xLeg ? yTop / 2 - 0.03 : yTop * 0.32;
+  g.add(boxAt(c, -lx, lx, ty, ty + (metal ? 0.04 : 0.07), -0.02, 0.02, lm, { r: metal ? 0.002 : 0.004 }));
 }
 
 /* ================================================================== */
@@ -1170,6 +1324,11 @@ export function desk(spec, kit, THREE) {
   const g = kit.group('desk');
   const { st, W, H, D } = c;
   const vanity = !!st.vanity;
+  // "Carvalho e Preto": tampo na madeira, estrutura (laterais, gaveteiro, painéis) na segunda cor
+  if (c.second) {
+    c.deskTop = c.body;
+    c.body = c.secondMat;
+  }
   // parte de cima (estante/espelho) quando a peça é alta
   const tall = H > 1.05;
   const deskH = tall ? clamp(Math.min(0.78, H * 0.56), 0.68, 0.8) : H;
@@ -1187,7 +1346,7 @@ export function desk(spec, kit, THREE) {
 }
 function deskTopMat(c) {
   if (c.has(/ gamer /)) return c.m.paint('#1d1d1d', { gloss: 0.3 });
-  return topMat(c);
+  return c.deskTop || topMat(c);
 }
 // Escrivaninha de painéis: lateral, gaveteiro (ou gaveta sob o tampo) e painel frontal
 function panelDesk(c, g, hTop) {
@@ -1310,9 +1469,12 @@ function gamerDesk(c, g, hTop) {
   // faixa colorida na borda da frente
   g.add(boxAt(c, -W / 2 + 0.1, W / 2 - 0.1, hTop - tt + 0.004, hTop - 0.004, D / 2 - 0.002, D / 2, red, { r: 0 }));
 }
-// Escrivaninha em L: tampo principal ao fundo e retorno à esquerda
+// Escrivaninha em L: tampo principal ao fundo e retorno à esquerda; gaveteiro à direita (se houver
+// gavetas); gamer = tampo e estrutura pretos com filete colorido nas bordas de dentro
 function lDesk(c, g, hTop) {
-  const { THREE, kit, W, D } = c;
+  const { THREE, kit, st, W, D } = c;
+  const gamer = c.has(/ gamer /) || st.gamer;
+  if (gamer) c.body = c.m.paint('#1b1b1b', { gloss: 0.3 });
   const tt = 0.025;
   const tm = deskTopMat(c);
   const d1 = Math.min(D * 0.9, clamp(D * 0.45, 0.45, 0.7));
@@ -1329,12 +1491,27 @@ function lDesk(c, g, hTop) {
   g.add(kit.place(plate(c, s, tt, tm, { bevel: 0.003 }), { y: hTop - tt }));
   const yU = hTop - tt;
   const t = 0.025;
-  // painéis: direita (sob o tampo do fundo), frente do retorno, canto
-  g.add(boxAt(c, W / 2 - t, W / 2, 0, yU + 0.001, -D / 2 + 0.01, -D / 2 + d1 - 0.02, c.body, { ...R2, grain: 'y' }));
+  // painéis: direita (ou gaveteiro) sob o tampo do fundo, frente do retorno, lateral esquerda
+  const nd = clamp(st.drawers || 0, 0, 5);
+  const pw = clamp(W * 0.28, 0.35, 0.45);
+  if (nd && W - w1 > pw + 0.5) {
+    const pull = pullType(c, 'bar');
+    const zf = -D / 2 + d1 - 0.018 - pullDepth(pull);
+    caseRow(c, g, { x0: W / 2 - pw, x1: W / 2, y0: 0, y1: yU + 0.001, zb: -D / 2 + 0.01, zf, top: false, mods: [{ w: 1, type: 'rows', rows: [{ f: 1, type: 'drawers', n: nd }] }], pull, style: frontStyle(c) });
+  } else g.add(boxAt(c, W / 2 - t, W / 2, 0, yU + 0.001, -D / 2 + 0.01, -D / 2 + d1 - 0.02, c.body, { ...R2, grain: 'y' }));
   g.add(boxAt(c, -W / 2 + 0.01, -W / 2 + w1 - 0.02, 0, yU + 0.001, D / 2 - t, D / 2, c.body, { ...R2, grain: 'y' }));
   g.add(boxAt(c, -W / 2, -W / 2 + t, 0, yU + 0.001, -D / 2 + 0.01, D / 2 - 0.02, c.body, { ...R2, grain: 'y' }));
   // painéis de fundo
-  g.add(boxAt(c, -W / 2 + t, W / 2 - t, yU - Math.min(0.35, yU * 0.5), yU, -D / 2 + 0.02, -D / 2 + 0.038, c.body));
+  g.add(boxAt(c, -W / 2 + t, W / 2 - (nd ? pw : t), yU - Math.min(0.35, yU * 0.5), yU, -D / 2 + 0.02, -D / 2 + 0.038, c.body));
+  if (gamer) {
+    // filete colorido (vermelho por padrão) nas bordas de dentro do L
+    const accent = /^#c8995e$/i.test(c.C.accent) || c.kit.luminance(c.C.accent) > 0.75 ? '#d42a2a' : c.C.accent;
+    const red = c.m.paint(accent, { gloss: 0.6 });
+    const y0 = hTop - tt + 0.005;
+    const y1 = hTop - 0.005;
+    g.add(boxAt(c, -W / 2 + w1, W / 2 - 0.01, y0, y1, -D / 2 + d1, -D / 2 + d1 + 0.002, red, { r: 0, part: 'accent' }));
+    g.add(boxAt(c, -W / 2 + w1, -W / 2 + w1 + 0.002, y0, y1, -D / 2 + d1, D / 2 - 0.01, red, { r: 0, part: 'accent' }));
+  }
 }
 // Estante sobre a escrivaninha (nichos e prateleira com livros)
 function hutch(c, g, hTop) {
@@ -1349,16 +1526,29 @@ function hutch(c, g, hTop) {
   });
 }
 // Espelho da penteadeira
+// (camarim: moldura larga com lâmpadas nas laterais e em cima)
 function vanityMirror(c, g, hTop) {
   const { kit, W, H, D } = c;
-  const mw = Math.min(0.75, W * 0.6);
-  const mh = H - hTop - 0.02;
+  const camarim = c.has(/ camarim /);
+  const mw = camarim ? Math.min(0.95, W * 0.8) : Math.min(0.75, W * 0.6);
   const zb = -D / 2;
-  const fr = 0.03;
+  const fr = camarim ? 0.065 : 0.03;
   g.add(boxAt(c, -mw / 2, mw / 2, hTop, H, zb, zb + 0.025, c.body, { r: 0.006 }));
   g.add(boxAt(c, -mw / 2 + fr, mw / 2 - fr, hTop + fr, H - fr, zb + 0.025, zb + 0.029, c.m.metal('#e6ecef', { finish: 'chrome' }), { r: 0, part: 'detail' }));
-  void kit;
-  void mh;
+  if (!camarim) return;
+  const bulb = c.m.flat('#fff6e0', { emissive: '#ffe2a8' });
+  const br = 0.02;
+  const z = zb + 0.025 + br * 0.55;
+  const put = (x, y) => g.add(kit.place(kit.sphere(br, bulb, { seg: 12, part: 'detail' }), { x, y, z }));
+  const xs = mw / 2 - fr / 2;
+  const nV = Math.max(3, Math.round((H - hTop - fr) / 0.13));
+  for (let i = 0; i < nV; i++) {
+    const y = hTop + fr + ((H - hTop - 1.5 * fr) * (i + 0.5)) / nV;
+    put(-xs, y);
+    put(xs, y);
+  }
+  const nH = Math.max(2, Math.round((mw - 2 * fr) / 0.14));
+  for (let i = 0; i < nH; i++) put(-mw / 2 + fr + ((mw - 2 * fr) * (i + 0.5)) / nH, H - fr / 2);
 }
 
 /* ================================================================== */
@@ -1378,8 +1568,10 @@ function rackUnit(c, g, b, opt = {}) {
   const { st } = c;
   const W = b.x1 - b.x0;
   const H = b.y1 - b.y0;
-  const type = opt.legs ?? legKind(c, st.woodLook ? 'tapered' : 'none');
-  const lh = opt.legs === 'none' && opt.baseH === 0 ? 0 : type === 'none' ? (opt.baseH ?? clamp(H * 0.08, 0.03, 0.06)) : type === 'palito' ? clamp(H * 0.26, 0.1, 0.2) : isMetalLeg(type) ? clamp(H * 0.22, 0.1, 0.2) : clamp(H * 0.14, 0.06, 0.12);
+  // suspenso ("Rack Bancada Suspenso"): sem pés nem rodapé, fundo reto (fica na parede)
+  const floating = opt.baseH === 0 || (opt.legs == null && st.wallMount);
+  const type = floating ? 'none' : opt.legs ?? legKind(c, st.woodLook ? 'tapered' : 'none');
+  const lh = floating ? 0 : type === 'none' ? (opt.baseH ?? clamp(H * 0.08, 0.03, 0.06)) : type === 'palito' ? clamp(H * 0.26, 0.1, 0.2) : isMetalLeg(type) ? clamp(H * 0.22, 0.1, 0.2) : clamp(H * 0.14, 0.06, 0.12);
   const style = frontStyle(c);
   let pull = pullType(c, style === 'slats' || style === 'cane' ? 'none' : 'cutout');
   const ft = Math.min(0.018, (b.zf - b.zb) * 0.12);
@@ -1437,7 +1629,8 @@ function rackFill(c, g, r) {
 function panelRack(c, g) {
   const { kit, st, W, H, D } = c;
   const pt = 0.025;
-  const pm = c.body;
+  // bicolor ("Off White e Nogueira"): o painel (ripado ou liso) é a parte em madeira
+  const pm = twoTone(c) ? woodMat(c, c.C.wood, 'oak') : c.body;
   const zb = -D / 2;
   // painel (do chão ao topo)
   const slats = st.headboard === 'slats' || c.has(/ ripad/);
@@ -1511,25 +1704,33 @@ export function shelf(spec, kit, THREE) {
   const c = ctx(spec, kit, THREE);
   const g = kit.group('shelf');
   const { st, W, H, D } = c;
-  if (st.ladder || c.has(/ escada /)) ladderShelf(c, g);
+  if (st.floating || (st.wallMount && H <= 0.12)) floatingShelf(c, g);
+  else if (st.ladder || c.has(/ escada /)) ladderShelf(c, g);
   else if (H < 0.6 && W < 0.9) nicheBox(c, g);
   else if (st.corner || c.has(/ cantoneira /)) cornerShelf(c, g);
+  else if (isSteelShelving(c)) steelShelf(c, g);
   else if (metalBase(c) || c.spec.material === 'metal' || c.spec.material === 'steel') metalShelf(c, g);
   else bookcase(c, g);
   return consolidate(c, g);
 }
+// "Estante de Aço 5 Prateleiras - Cinza": toda de chapa (sem madeira, MDF ou pegada industrial no nome)
+const isSteelShelving = (c) => (c.spec.material === 'metal' || c.spec.material === 'steel') && !c.st.woodLook && !c.st.industrial && !c.words.some((w) => w.wood) && !c.has(/ madeira | mdf | mdp | tampo | prateleiras? de (madeira|mdf|vidro) /);
 // Estante de livros: laterais, rodapé, fundo, colunas, prateleiras; portas/gavetas embaixo; cristaleira
 function bookcase(c, g) {
   const { st, W, H, D } = c;
   const t = 0.018;
-  const type = legKind(c, 'none');
-  const lh = type === 'none' ? 0.05 : type === 'palito' ? clamp(H * 0.1, 0.1, 0.2) : clamp(H * 0.08, 0.06, 0.15);
+  // estante suspensa/de parede: sem rodapé nem pés
+  const hung = !!st.wallMount;
+  const type = hung ? 'none' : legKind(c, 'none');
+  const lh = hung ? 0 : type === 'none' ? 0.05 : type === 'palito' ? clamp(H * 0.1, 0.1, 0.2) : clamp(H * 0.08, 0.06, 0.15);
   const glassDoors = !!st.glassDoors;
   const pull = pullType(c, glassDoors ? 'knob' : 'bar');
   const hasFronts = glassDoors || st.doors || st.drawers;
   const zf = D / 2 - (hasFronts ? 0.018 + pullDepth(pull) : 0);
-  baseUnder(c, g, { x0: -W / 2, x1: W / 2, zb: -D / 2, zf: hasFronts ? zf : D / 2, type, h: lh });
-  const nc = W < 0.65 ? 1 : clamp(Math.round(W / 0.42), 1, 6);
+  if (!hung) baseUnder(c, g, { x0: -W / 2, x1: W / 2, zb: -D / 2, zf: hasFronts ? zf : D / 2, type, h: lh });
+  // até ~90 cm é um vão só (prateleira inteira); mais largo, colunas de ~42 cm
+  const nc = W < 0.9 ? 1 : clamp(Math.round(W / 0.42), 2, 6);
+  const books = c.has(/ livr| biblioteca /);
   const levels = Math.max(2, typeof st.shelf === 'number' ? st.shelf : Math.round((H - lh) / 0.36));
   const lowH = st.doors || st.drawers ? clamp((H - lh) * 0.3, 0.4, 0.8) : 0;
   const openBack = !!(st.openBack || c.has(/ vazad/));
@@ -1544,8 +1745,15 @@ function bookcase(c, g) {
   if (glassDoors && nc === 1) mods[0].rows = mods[0].rows.map((r) => (r.type === 'glass' ? { ...r, n: W > 0.6 ? 2 : 1 } : r));
   caseRow(c, g, {
     x0: -W / 2, x1: W / 2, y0: lh, y1: H, zb: -D / 2, zf: hasFronts ? zf : D / 2, mods, pull, back: !openBack, style: frontStyle(c), pullPos: 'mid',
-    fill: (r) => (r.kind === 'glass' ? dishes(c, g, r) : fillCompartment(c, g, { ...r, density: openBack ? 0.7 : 1 })),
+    // cristaleira "com espelho": fundo espelhado
+    inner: glassDoors && st.mirror ? c.m.metal('#e3eaee', { finish: 'chrome' }) : undefined,
+    fill: (r) => (r.kind === 'glass' ? dishes(c, g, r) : fillCompartment(c, g, { ...r, density: books ? 1.4 : openBack ? 0.7 : 1 })),
   });
+}
+// Prateleira flutuante (de parede): uma tábua de cantos suaves, suporte escondido
+function floatingShelf(c, g) {
+  const { W, H, D } = c;
+  g.add(boxAt(c, -W / 2, W / 2, 0, H, -D / 2, D / 2, c.body, { r: Math.min(0.004, H / 4), seg: 2, grain: 'x' }));
 }
 // Louças na cristaleira: pratos em pé, copos e tigelas
 function dishes(c, g, { x0, x1, y, h, zb, zf }) {
@@ -1620,6 +1828,70 @@ function cornerShelf(c, g) {
     if (i < n - 1) fillCompartment(c, g, { x0: -W / 2 + 0.04, x1: -W / 2 + W * 0.5, y: y + t, h: (H - t) / (n - 1) - t - 0.01, zb: -D / 2 + t, zf: -D / 2 + D * 0.55, density: 0.7 });
   }
 }
+// Estante de aço (sem madeira no nome): cantoneiras perfuradas, bandejas de chapa com aba, caixas
+function steelShelf(c, g) {
+  const { st, W, H, D, kit, m, r } = c;
+  const sm = c.metal;
+  const a = 0.035; // aba da cantoneira
+  const ct = 0.002;
+  const holes = m.flat('#2a2a2a', { roughness: 0.8 });
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const x = sx * (W / 2 - a / 2);
+      const z = sz * (D / 2 - ct / 2);
+      // cantoneira em L: aba na frente/fundo e aba na lateral
+      g.add(boxAt(c, x - a / 2, x + a / 2, 0, H, z - ct / 2, z + ct / 2, sm, { r: 0 }));
+      g.add(boxAt(c, sx > 0 ? W / 2 - ct : -W / 2, sx > 0 ? W / 2 : -W / 2 + ct, 0, H, sz > 0 ? D / 2 - a : -D / 2, sz > 0 ? D / 2 : -D / 2 + a, sm, { r: 0 }));
+      // furos (faixa escura discreta)
+      const n = Math.floor(H / 0.05);
+      for (let i = 1; i < n; i++) g.add(boxAt(c, x - 0.004, x + 0.004, i * 0.05 - 0.007, i * 0.05 + 0.007, z + sz * ct / 2, z + sz * (ct / 2 - 0.0006), holes, { r: 0, part: 'detail' }));
+    }
+  }
+  const n = Math.max(3, typeof st.shelf === 'number' ? st.shelf : Math.round(H / 0.4) + 1);
+  const ys = [];
+  for (let i = 0; i < n; i++) ys.push(0.06 + ((H - 0.06 - 0.004) * i) / (n - 1));
+  ys.forEach((y, i) => {
+    // bandeja: chapa + abas dobradas na frente e no fundo
+    g.add(boxAt(c, -W / 2 + ct, W / 2 - ct, y - 0.004, y, -D / 2 + ct, D / 2 - ct, sm, { r: 0 }));
+    for (const sz of [-1, 1]) g.add(boxAt(c, -W / 2 + ct, W / 2 - ct, y - 0.032, y, sz > 0 ? D / 2 - ct - 0.0015 : -D / 2 + ct, sz > 0 ? D / 2 - ct : -D / 2 + ct + 0.0015, sm, { r: 0 }));
+    if (i < n - 1) storageFill(c, g, { x0: -W / 2 + a + 0.01, x1: W / 2 - a - 0.01, y, h: ys[i + 1] - y - 0.04, zb: -D / 2 + 0.01, zf: D / 2 - 0.01 });
+  });
+  // X de reforço no fundo (vão de baixo) e nas laterais
+  const xBar = (x0, x1, z0, z1, y0, y1, alongX) => {
+    const L = Math.hypot(alongX ? x1 - x0 : z1 - z0, y1 - y0);
+    const ang = Math.atan2(y1 - y0, alongX ? x1 - x0 : z1 - z0);
+    for (const s of [-1, 1]) {
+      const bar = kit.box(alongX ? L : 0.002, alongX ? 0.014 : 0.014, alongX ? 0.002 : L, sm, { part: 'metal' });
+      if (alongX) bar.rotation.z = s * ang;
+      else bar.rotation.x = -s * ang;
+      bar.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+      g.add(bar);
+    }
+  };
+  const yb0 = ys[0] + 0.02;
+  const yb1 = ys[1] - 0.04;
+  xBar(-W / 2 + a, W / 2 - a, -D / 2 + 0.0035, -D / 2 + 0.0035, yb0, yb1, true);
+  for (const sx of [-1, 1]) xBar(sx * (W / 2 - 0.0035), sx * (W / 2 - 0.0035), -D / 2 + a, D / 2 - a, yb0, yb1, false);
+  void r;
+}
+// Caixas organizadoras / de papelão numa prateleira de aço
+function storageFill(c, g, { x0, x1, y, h, zb, zf }) {
+  const { r, m } = c;
+  if (h < 0.12) return;
+  let x = x0 + r() * 0.05;
+  let k = 0;
+  while (x < x1 - 0.2 && k < 4) {
+    const w = Math.min(x1 - x, 0.22 + r() * 0.16);
+    const bh = Math.min(h - 0.01, 0.14 + r() * 0.12);
+    const d = Math.min(zf - zb - 0.02, 0.22 + r() * 0.1);
+    if (r() < 0.78) {
+      const col = r.pick(['#b8916a', '#c4a27a', '#a9845d', '#e9e4da', '#3c4a5a']);
+      g.add(boxAt(c, x, x + w, y, y + bh, zb + 0.01, zb + 0.01 + d, m.paint(col, { gloss: 0.1 }), { r: 0.002, seg: 1, part: 'detail' }));
+    }
+    x += w + 0.02 + r() * 0.06;
+    k++;
+  }
+}
 // Estante industrial: montantes de metal, prateleiras de madeira e travas em X nas laterais
 function metalShelf(c, g) {
   const { st, W, H, D } = c;
@@ -1663,7 +1935,9 @@ export function kitchen_cabinet(spec, kit, THREE) {
   const c = ctx(spec, kit, THREE);
   const g = kit.group('kitchen_cabinet');
   const { st, W, H } = c;
-  const layout = st.layout || (c.has(/ aereo | aereos /) ? 'wall' : c.has(/ paneleir/) || (H > 1.6 && W < 0.95) ? 'tall' : H < 1.15 ? 'base' : 'compact');
+  // conjunto ("Cozinha Completa 5 Peças com Balcão e Paneleiro") vence as palavras das peças
+  const kitchenSet = H >= 1.15 && W >= 1.0 && c.has(/ cozinhas? (compacta|completa|modulada|planejada|americana)| \d+ pecas | kit cozinha /);
+  const layout = st.layout || (kitchenSet ? 'compact' : c.has(/ aereo | aereos /) ? 'wall' : c.has(/ paneleir/) || (H > 1.6 && W < 0.95) ? 'tall' : H < 1.15 ? 'base' : 'compact');
   if (layout === 'wall') wallCabinet(c, g, { x0: -c.W / 2, x1: c.W / 2, y0: 0, y1: H, zb: -c.D / 2, zf: c.D / 2 });
   else if (layout === 'tall') tallCabinet(c, g, { x0: -c.W / 2, x1: c.W / 2, y1: H, zb: -c.D / 2, zf: c.D / 2 });
   else if (layout === 'base') baseCabinet(c, g, { x0: -c.W / 2, x1: c.W / 2, y1: H, zb: -c.D / 2, zf: c.D / 2, sink: st.sink ?? c.has(/ pia | cuba /), cooktop: st.cooktop ?? c.has(/ cooktop /) });
@@ -1671,11 +1945,13 @@ export function kitchen_cabinet(spec, kit, THREE) {
   return consolidate(c, g);
 }
 const kPull = (c) => pullType(c, 'bar');
-function counterMat(c) {
+function counterMat(c, sink = false) {
   const { m, C, st } = c;
   if (isMarble(c)) return m.marble(marbleColor(c));
   if (c.sinkInox || st.inox || c.has(/ tampo (de )?inox /)) return m.metal('#cfd2d4', { finish: 'brushed' });
   if (st.woodLook) return c.body;
+  // balcão de pia sem tampo citado: mármore sintético claro (o padrão desses gabinetes)
+  if (sink && !c.has(/ tampo (de |em )?(madeira|mdf|mdp) /)) return m.marble('#ecebe6');
   return woodMat(c, C_WOOD(c), 'smooth');
 }
 // Balcão (base com tampo): gaveteiro + portas; cuba e cooktop opcionais
@@ -1703,7 +1979,7 @@ function baseCabinet(c, g, { x0, x1, y1, zb, zf, sink, cooktop, faucetRoom = 0 }
   } else if (st.drawers) mods[0] = { w: 1, type: 'rows', rows: [{ f: 2.6, type: 'doors', n: 1 }, { f: 1, type: 'drawers', n: 1 }] };
   caseRow(c, g, { x0, x1, y0: plH, y1: y1 - ct, zb, zf: zFr, mods, pull, style: frontStyle(c), pullPos: 'top' });
   // tampo (com furo da cuba) e cuba/cooktop
-  const cm = counterMat(c);
+  const cm = counterMat(c, sink);
   const sw = Math.min(0.56, W * 0.42);
   const sd = Math.min(0.38, (zf - zb) * 0.66);
   const scx = sink ? x0 + W * (mods.length > 1 ? 0.32 : 0.5) : 0;

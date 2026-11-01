@@ -374,7 +374,8 @@ const TEXTURES = {
           const mottle = coarse(64, 64, (u, v) => fbm(u * 4, v * 4, 4, 4, 4, 43));
           return (i, j, hgt) => 0.84 + 0.1 * hgt + (mottle(i / 512, j / 512) - 0.5) * 0.12;
         })(),
-        rough: (i, j, hgt) => 0.42 + 0.22 * (1 - hgt),
+        // couro com brilho acetinado (antes 0.42..0.64 parecia lona/juta)
+        rough: (i, j, hgt) => 0.34 + 0.16 * (1 - hgt),
       });
     }),
   boucle: () =>
@@ -409,7 +410,8 @@ const TEXTURES = {
         }
       }
       const C = new Float32Array(S * S);
-      for (let k = 0; k < C.length; k++) C[k] = 0.6 + 0.4 * H[k];
+      // contraste suave: o bouclé claro não vira "granito" cinza (o relevo fica por conta do normal map)
+      for (let k = 0; k < C.length; k++) C[k] = 0.8 + 0.2 * H[k];
       return {
         map: toTexture(pixels(S, S, (i, j) => C[j * S + i]), true),
         normal: toTexture(normalCanvas(H, S, S, 3.5), false),
@@ -749,10 +751,12 @@ function screenTexture() {
 const MAT = new Map();
 const keyOf = (type, color, opts) => `${type}|${color}|${JSON.stringify(opts || {})}`;
 // Cor compensada pela média da textura (o resultado médio fica igual à cor pedida)
-function tint(color, set, cap = 1.25) {
+// keepHue: limita o ganho pelo canal mais forte, para cores claras (off white, bege) não perderem o tom ao saturar em 1
+function tint(color, set, cap = 1.25, keepHue = false) {
   const c = colorOf(color);
   if (!set) return c;
-  const k = Math.min(cap, 1 / (set.mean || 1));
+  let k = Math.min(cap, 1 / (set.mean || 1));
+  if (keepHue) k = Math.max(1, Math.min(k, 1 / Math.max(c.r, c.g, c.b, 1e-3)));
   c.r = Math.min(1, c.r * k);
   c.g = Math.min(1, c.g * k);
   c.b = Math.min(1, c.b * k);
@@ -796,7 +800,7 @@ export const mat = {
         m.userData = { tile: s.tile, part: 'main' };
       } else if (kind === 'leather') {
         const s = TEXTURES.leather();
-        m = new THREE.MeshPhysicalMaterial(withTex({ color: tint(hex, s), roughness: 1, clearcoat: 0.18, clearcoatRoughness: 0.55 }, s, { normalScale: 0.45 }));
+        m = new THREE.MeshPhysicalMaterial(withTex({ color: tint(hex, s, 1.25, true), roughness: 1, clearcoat: 0.35, clearcoatRoughness: 0.4 }, s, { normalScale: 0.2 }));
         m.userData = { tile: s.tile, part: 'main' };
       } else if (kind === 'suede') {
         const s = TEXTURES.suede();
@@ -804,7 +808,7 @@ export const mat = {
         m.userData = { tile: s.tile, part: 'main' };
       } else if (kind === 'boucle') {
         const s = TEXTURES.boucle();
-        m = new THREE.MeshStandardMaterial(withTex({ color: tint(hex, s, 1.3), roughness: 1 }, s, { normalScale: 1.1 }));
+        m = new THREE.MeshStandardMaterial(withTex({ color: tint(hex, s, 1.3, true), roughness: 1 }, s, { normalScale: 0.9 }));
         m.userData = { tile: s.tile, part: 'main' };
       } else {
         const s = kind === 'linen' ? TEXTURES.linen() : TEXTURES.cotton();
@@ -1220,10 +1224,26 @@ export function sphere(r, material, { seg = 24, part, scaleY = 1 } = {}) {
 export function lathe(points, material, { seg = 32, part } = {}) {
   const pts = points.map(([r, y]) => new THREE.Vector2(Math.max(0, r), y));
   const geo = new THREE.LatheGeometry(pts, seg);
+  // raio médio ponderado pelo comprimento de cada trecho do perfil (as pontas com r≈0 das tampas
+  // não puxam a média para baixo, o que esticava a trama em rolos e almofadas cilíndricas)
   let len = 0;
-  let rAvg = 0;
-  for (let i = 1; i < pts.length; i++) len += pts[i].distanceTo(pts[i - 1]);
-  pts.forEach((p) => (rAvg += p.x / pts.length));
+  let rw = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const l = pts[i].distanceTo(pts[i - 1]);
+    len += l;
+    rw += ((pts[i].x + pts[i - 1].x) / 2) * l;
+  }
+  const rAvg = len > 0 ? rw / len : pts[0]?.x || 0;
+  // o LatheGeometry distribui v por índice do ponto; aqui v passa a ser o comprimento de arco do perfil
+  if (len > 0 && pts.length > 2) {
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
+    const uvA = geo.attributes.uv;
+    for (let i = 0; i < uvA.count; i++) {
+      const j = Math.round(uvA.getY(i) * (pts.length - 1));
+      uvA.setY(i, cum[Math.min(pts.length - 1, Math.max(0, j))] / len);
+    }
+  }
   scaleUV(geo, material, 2 * Math.PI * rAvg, len, true);
   return finishMesh(geo, material, part);
 }

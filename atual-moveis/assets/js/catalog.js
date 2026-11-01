@@ -3,7 +3,7 @@ import { $, $$, esc, norm, icon, brl, km, plural, picture, bannerPicture, hydrat
 import {
   S, emit, pixPrice, hasPix, displayPrice, installments, pixPct, categoryName, deliveryStatus, feeFor, setLocation, storeWhatsapp, storeAddress,
 } from './state.js';
-import { openSheet, closeSheet, onOpen, setPanel, toggleMenu } from './layers.js';
+import { openSheet, closeSheet, onOpen, setPanel, toggleMenu, sheet, drawer } from './layers.js';
 import { resolveCep, updateStoreUI } from './picker.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -13,6 +13,72 @@ const mqMobile = matchMedia('(max-width: 749px)');
 export const storePath = () => `/loja/${S.store.slug}`;
 export const productUrl = (p) => `${storePath()}?produto=${encodeURIComponent(p.slug)}`;
 export const listUrl = (params) => `${storePath()}?${new URLSearchParams(params)}`;
+export const roomUrl = (p) => listUrl(p ? { ambiente: 1, add: p.slug } : { ambiente: 1 });
+
+/* ---------- 3D automático ---------- */
+// three.js e os geradores (assets/js/3d/) só baixam quando a pessoa abre o 3D ou o ambiente.
+// Até lá, "tem 3D?" sai de uma regra leve que espelha os casos sem 3D do infer.js (serviços, garantia,
+// frete, categoria marcada como 'none'). Depois que o 3D carregou uma vez, vale o inferSpec de verdade.
+let infer3d = null;
+let has3dCache = new WeakMap();
+export function useInfer3d(mod) {
+  if (!mod?.inferSpec || infer3d === mod) return;
+  infer3d = mod;
+  has3dCache = new WeakMap();
+}
+
+const words = (s) => ` ${norm(s).replace(/[^a-z0-9]+/g, ' ').trim()} `;
+const NO3D = 'garantia|seguro|servicos?|montagem|frete|vale presente|cartao presente|gift card';
+const NO3D_NAME = new RegExp(`^ ((kit|plano|pacote|taxa|taxa de) )?(${NO3D}) `); // o 1º substantivo do nome manda
+const NO3D_CAT = new RegExp(`^ (${NO3D}) `);
+// itens que não vão no piso do ambiente (parede, teto e têxteis), pelo começo do nome ou pela categoria
+const AC = '(ar|ares) condicionados?|condicionador(es)? de ar|split|climatizador(es)?|climatizacao';
+const NO_ROOM_NAME = new RegExp(
+  `^ ((kit|jogo|conjunto|par)( de)?( [0-9]+)? )?(${AC}|espelhos?|quadros?|telas? decorativas?|suportes?|jogos? de (cama|lencol)|lencois|lencol|edredo(m|ns)|cobertor(es)?|mantas?|toalhas?|almofadas?|cortinas?|persianas?|colchas?|cobre leitos?) `
+);
+const NO_ROOM_CAT = new RegExp(` (${AC}) `);
+
+export function ctx3d(p) {
+  const category = S.catById[p?.category_id] || null;
+  const parentCategory = category?.parent_id ? S.catById[category.parent_id] || null : null;
+  return { category, parentCategory };
+}
+
+function probe3d(p) {
+  if (infer3d) {
+    let spec = null;
+    try {
+      spec = infer3d.inferSpec(p, ctx3d(p));
+    } catch {
+      spec = null;
+    }
+    const s = spec?.style || {};
+    const room = !!spec && spec.kind !== 'air_conditioner' && !(spec.kind === 'generic' && (s.textile || ['mirror', 'frame', 'bracket'].includes(s.decor)));
+    return { has: !!spec, room };
+  }
+  const forced = p.model3d && typeof p.model3d === 'object' ? p.model3d.kind : null;
+  const cat = ctx3d(p).category;
+  const name = words(p.name);
+  let has = true;
+  if (typeof forced === 'string' && forced) has = forced !== 'none';
+  else if (NO3D_NAME.test(name)) has = false;
+  else if (cat?.model_kind === 'none') has = false;
+  else if (cat && !cat.model_kind && NO3D_CAT.test(words(cat.name))) has = false;
+  const catKind = forced || cat?.model_kind || '';
+  const room = has && catKind !== 'air_conditioner' && !NO_ROOM_NAME.test(name) && !(cat && !cat.model_kind && NO_ROOM_CAT.test(words(cat.name)));
+  return { has, room };
+}
+function info3d(p) {
+  if (!p) return { has: false, room: false };
+  let r = has3dCache.get(p);
+  if (!r) {
+    r = probe3d(p);
+    has3dCache.set(p, r);
+  }
+  return r;
+}
+export const has3D = (p) => info3d(p).has;
+export const roomFriendly = (p) => info3d(p).room;
 
 /* ---------- Arrastar trilhos com o mouse ---------- */
 export function dragScroll(el) {
@@ -145,6 +211,7 @@ export function cardHTML(p, { badgeAll } = {}) {
           ${p.is_promo ? `<span class="card__seal" title="Super oferta">${icon('i-seal')}<span class="visually-hidden">Super oferta</span></span>` : ''}
         </div>
       </div>
+      ${has3D(p) ? `<span class="glass card__3d" role="img" aria-label="Disponível em 3D" title="Disponível em 3D">${icon('i-cube')}<span aria-hidden="true">3D</span></span>` : ''}
       ${soldout ? '' : `<button class="card__add" type="button" aria-label="Adicionar ${esc(p.name)} ao carrinho" data-add="${esc(p.id)}">${icon('i-cart-plus')}</button>`}
     </div>
     <div class="card__info">
@@ -451,6 +518,29 @@ const tileHTML = (t, withSub) => `<a class="tile" href="${esc(t.link_url || '#')
   <span class="tile__overlay"><span class="tile__title">${esc(t.title)}</span>${withSub && t.text ? `<span class="tile__sub">${esc(t.text)}</span>` : ''}</span>
 </a>`;
 
+// Chamada para o "Monte seu ambiente" (imagem renderizada do próprio planejador, carregada sob demanda)
+function roomPromoHTML() {
+  return `<section class="room-promo" aria-labelledby="room-promo-title">
+    <div class="room-promo__inner">
+      <a class="room-promo__art" href="${esc(roomUrl())}" data-route tabindex="-1" aria-hidden="true">
+        ${picture('room-3d', { cls: 'room-promo__img', sizes: '(max-width: 749px) 92vw, 640px' })}
+        <span class="room-promo__tag">${icon('i-cube')}3D</span>
+      </a>
+      <div class="room-promo__copy">
+        <p class="room-promo__kicker">${icon('i-cube')}Novidade</p>
+        <h2 class="room-promo__title" id="room-promo-title">Monte seu ambiente em 3D</h2>
+        <p class="room-promo__text">Coloque os produtos da loja nas medidas do seu cômodo, arraste, gire e veja como tudo fica antes de comprar.</p>
+        <ul class="room-promo__points">
+          <li>${icon('i-check')}Medidas reais de cada produto</li>
+          <li>${icon('i-check')}Sala, quarto, cozinha e jantar</li>
+          <li>${icon('i-check')}Tudo no carrinho de uma vez</li>
+        </ul>
+        <a class="btn btn--primary room-promo__btn" href="${esc(roomUrl())}" data-route>Montar meu ambiente ${icon('i-arrow')}</a>
+      </div>
+    </div>
+  </section>`;
+}
+
 /* ---------- Página inicial ---------- */
 export function renderHome() {
   renderHero();
@@ -477,10 +567,12 @@ export function renderHome() {
   const rooms = (S.sf.banners || []).filter((b) => b.kind === 'room');
   const marquee = (Array.isArray(S.store.marquee) && S.store.marquee.length ? S.store.marquee : S.net.marquee) || [];
 
+  const roomPromo = S.products.some(roomFriendly) ? roomPromoHTML() : '';
   const parts = [];
   shelves.forEach((s, i) => {
     parts.push(shelfHTML(s.c, s.products));
     if (i === 0 && marquee.length) parts.push(marqueeHTML(marquee));
+    if (i === 0 && roomPromo) parts.push(roomPromo);
     if (i === 1 && mosaics.length) parts.push(`<section class="mosaic mosaic--2" aria-label="Inspirações">${mosaics.map((t) => tileHTML(t, true)).join('')}</section>`);
     if (i === 2 && rooms.length) parts.push(`<section class="mosaic mosaic--4" aria-label="Compre por ambiente">${rooms.map((t) => tileHTML(t, false)).join('')}</section>`);
   });
@@ -489,6 +581,7 @@ export function renderHome() {
   if (shelves.length < 3 && rooms.length) parts.push(`<section class="mosaic mosaic--4" aria-label="Compre por ambiente">${rooms.map((t) => tileHTML(t, false)).join('')}</section>`);
   if (!shelves.length && S.products.length) {
     parts.unshift(shelfHTML({ key: 'produtos', title: 'Produtos da loja', layout: 'five' }, S.products.slice(0, 12)));
+    if (roomPromo) parts.splice(1, 0, roomPromo);
   }
   if (!S.products.length) {
     parts.unshift(`<section class="listing"><div class="listing__empty"><strong>Esta loja ainda está montando o catálogo online.</strong>Fale com a ${esc(S.store.name)} pelo WhatsApp ou escolha outra loja.</div></section>`);
@@ -701,6 +794,8 @@ export function renderMenus() {
   collMenu.forEach((c) =>
     items.push(`<li><a class="mpill${c.key === 'ofertas' ? ' is-hot' : ''}" href="${esc(listUrl({ colecao: c.key }))}" data-route data-menu-link>${esc(c.title)}</a></li>`)
   );
+  const room = S.products.some(roomFriendly);
+  if (room) items.push(`<li><a class="mpill mpill--3d" href="${esc(roomUrl())}" data-route data-menu-link><span>Monte seu ambiente 3D</span>${icon('i-cube')}</a></li>`);
   items.push(`<li><button class="mpill" type="button" data-open-picker>Trocar de loja <span class="small">${esc(S.store.city)}</span></button></li>`);
   items.push(`<li><a class="mpill" href="${esc(mapsLink(`${S.store.name}, ${storeAddress()}`))}" target="_blank" rel="noopener">Como chegar na loja</a></li>`);
   items.push(`<li><button class="mpill mpill--cta" type="button" data-open-track>Rastrear pedido</button></li>`);
@@ -718,6 +813,9 @@ export function renderMenus() {
         : `<div class="nav-item"><a class="nav-item__link" href="${esc(listUrl({ categoria: g.p.slug }))}" data-route>${esc(g.p.name)}</a></div>`
     ),
     ...collMenu.slice(0, 2).map((c) => `<div class="nav-item"><a class="nav-item__link${c.key === 'ofertas' ? ' is-hot' : ''}" href="${esc(listUrl({ colecao: c.key }))}" data-route>${esc(c.title)}</a></div>`),
+    room
+      ? `<div class="nav-item"><a class="nav-item__link nav-item__link--3d" href="${esc(roomUrl())}" data-route aria-label="Monte seu ambiente 3D" title="Monte seu ambiente 3D">${icon('i-cube')}<span><span class="nav-item__word">Ambiente </span>3D</span></a></div>`
+      : '',
   ].join('');
   $$('[data-mega]', nav).forEach((item) => {
     const link = $('.nav-item__link', item);
@@ -974,6 +1072,9 @@ function renderPdp() {
   ];
   const related = S.products.filter((x) => x.id !== p.id && x.category_id === p.category_id).slice(0, 4);
   const badges = [p.is_new && 'Lançamento', p.free_shipping && 'Frete grátis', p.fast_delivery && 'Pronta entrega', p.is_promo && 'Super oferta'].filter(Boolean);
+  const can3D = has3D(p);
+  const focus3D = (where) => (pdpState.focus3D === where ? ' autofocus' : '');
+  const thumbs = images.length > 1 || can3D;
   el.innerHTML = `
     <div class="sheet__head">
       <h2 class="sheet__title visually-hidden">${esc(p.name)}</h2>
@@ -986,8 +1087,15 @@ function renderPdp() {
           <div class="pdp__main">${picture(images[idx], { eager: true, alt: p.name })}
             ${badges.length ? `<div class="pdp__badges">${badges.map((b) => `<span class="badge">${b}</span>`).join('')}</div>` : ''}
             ${images.length > 1 ? `<button class="pdp__nav pdp__nav--prev" type="button" aria-label="Foto anterior" data-img="${(idx - 1 + images.length) % images.length}">${icon('i-chev-l')}</button><button class="pdp__nav pdp__nav--next" type="button" aria-label="Próxima foto" data-img="${(idx + 1) % images.length}">${icon('i-chev-r')}</button>` : ''}
+            ${can3D ? `<button class="pdp__3d" type="button" data-pdp-3d="main"${focus3D('main')}>${icon('i-cube')}<span>Ver em 3D</span></button>` : ''}
           </div>
-          ${images.length > 1 ? `<div class="pdp__thumbs">${images.map((u, i) => `<button class="pdp__thumb" type="button" aria-label="Foto ${i + 1}" aria-current="${i === idx}" data-img="${i}">${picture(u)}</button>`).join('')}</div>` : ''}
+          ${
+            thumbs
+              ? `<div class="pdp__thumbs">${
+                  can3D ? `<button class="pdp__thumb pdp__thumb--3d" type="button" aria-label="Ver em 3D" data-pdp-3d="thumb"${focus3D('thumb')}>${icon('i-cube')}<span aria-hidden="true">3D</span></button>` : ''
+                }${images.map((u, i) => `<button class="pdp__thumb" type="button" aria-label="Foto ${i + 1}" aria-current="${i === idx}" data-img="${i}">${picture(u)}</button>`).join('')}</div>`
+              : ''
+          }
         </div>
         <div class="pdp__info">
           ${cat ? `<a class="pdp__cat" href="${esc(listUrl({ categoria: cat.slug }))}" data-route>${esc(cat.name)}</a>` : ''}
@@ -1018,7 +1126,10 @@ function renderPdp() {
                  <a class="btn btn--whats btn--block" href="${esc(waLink(storeWhatsapp(), `Olá! O produto ${p.name} está esgotado no site. Vai chegar mais?`))}" target="_blank" rel="noopener">${icon('i-whatsapp')} Avise-me pelo WhatsApp</a>`
           }
           ${deliveryBlock(p)}
-          <button class="pdp__share" type="button" data-share>${icon('i-share')} Compartilhar</button>
+          <div class="pdp__actions">
+            ${roomFriendly(p) ? `<a class="pdp__room" href="${esc(roomUrl(p))}" data-route>${icon('i-cube')} Ver no ambiente 3D</a>` : ''}
+            <button class="pdp__share" type="button" data-share>${icon('i-share')} Compartilhar</button>
+          </div>
           ${p.description || p.short_description ? `<div class="pdp__section"><h3>Descrição</h3><p class="pdp__desc">${esc(p.description || p.short_description)}</p></div>` : ''}
           ${specs.length ? `<div class="pdp__section"><h3>Características</h3><table class="specs"><tbody>${specs.map((s) => `<tr><th scope="row">${esc(s.label)}</th><td>${esc(s.value)}</td></tr>`).join('')}</tbody></table></div>` : ''}
         </div>
@@ -1035,27 +1146,122 @@ export function openProduct(slug, { push = true } = {}) {
   }
   const firstAvailable = p.variants?.find((v) => v.in_stock) || p.variants?.[0] || null;
   pdpState = { p, variant: firstAvailable, imgIndex: 0, qty: 1, prevUrl: location.pathname + location.search };
-  renderPdp();
   rememberViewed(p.id);
   if (push) history.pushState({ produto: p.slug }, '', productUrl(p));
-  document.title = `${p.name} · ${S.store.name}`;
-  openSheet('product-sheet', {
-    onClose: () => {
-      if (new URLSearchParams(location.search).get('produto')) {
-        const url = new URL(location.href);
-        url.searchParams.delete('produto');
-        history.pushState({}, '', url.pathname + url.search);
-        emit('title');
-      }
-    },
-  });
+  showPdpSheet();
   return true;
+}
+
+// Abre a janela do produto com o estado atual (também na volta do 3D, sem nova entrada no histórico)
+function showPdpSheet() {
+  renderPdp();
+  document.title = `${pdpState.p.name} · ${S.store.name}`;
+  openSheet('product-sheet', { onClose: leaveProductUrl });
+}
+
+// Ao fechar o produto, a URL volta para a página de baixo
+function leaveProductUrl() {
+  if (new URLSearchParams(location.search).get('produto')) {
+    const url = new URL(location.href);
+    url.searchParams.delete('produto');
+    history.pushState({}, '', url.pathname + url.search);
+    emit('title');
+  }
+}
+
+/* ---------- Produto em 3D ---------- */
+// O 3D abre numa janela própria (#viewer3d-sheet), que fecha a do produto. A URL continua em ?produto=…,
+// e ao fechar o 3D a página do produto volta como estava (cor, quantidade), sem nova entrada no histórico.
+let view3d = null; // { st, viewer }
+let opening3D = false;
+
+async function openPdp3D(where) {
+  const st = pdpState;
+  if (!st || opening3D) return;
+  const el = $('#product-sheet');
+  opening3D = true;
+  $$('[data-pdp-3d]', el).forEach((b) => b.setAttribute('aria-busy', 'true'));
+  let mod;
+  try {
+    mod = await import('./3d/viewer.js');
+  } catch (err) {
+    console.warn('[3d] não foi possível carregar o visualizador:', err);
+    toast('Não foi possível abrir o 3D agora. Confira sua conexão e tente de novo.');
+    return;
+  } finally {
+    opening3D = false;
+    $$('[data-pdp-3d]', el).forEach((b) => b.removeAttribute('aria-busy'));
+  }
+  // a pessoa pode ter fechado o produto enquanto o visualizador baixava
+  if (pdpState !== st || sheet.el !== el) return;
+  const p = st.p;
+  st.opener = sheet.lastFocus; // quem abriu o produto (o foco volta para ele quando o produto fechar)
+  st.focus3D = where === 'thumb' ? 'thumb' : 'main';
+  const me = { st, viewer: null };
+  view3d = me;
+  try {
+    me.viewer = mod.open3D({
+      product: p,
+      ...ctx3d(p),
+      variantId: st.variant?.id || null,
+      onVariant: (id) => {
+        st.variant = p.variants?.find((v) => v.id === id) || st.variant;
+        st.imgIndex = 0;
+      },
+      onAddToCart: (variant) => emit('cart-add', { id: p.id, variant, qty: 1, open: true }),
+      // decide depois que o clique/tecla terminou de propagar: se o carrinho abriu por cima, o produto não volta
+      onClose: () => setTimeout(() => backFrom3D(me), 0),
+    });
+  } catch (err) {
+    console.warn('[3d] não foi possível abrir o visualizador:', err);
+    view3d = null;
+    st.focus3D = null;
+    toast('Não foi possível abrir o 3D agora.');
+    return;
+  }
+  // depois do 1º 3D, "tem 3D?" passa a usar o inferSpec de verdade (o módulo já está no navegador)
+  me.viewer.ready.then(() => import('./3d/infer.js').then(useInfer3d, () => {}));
+}
+
+function backFrom3D(me) {
+  if (view3d !== me) return;
+  view3d = null;
+  const { st } = me;
+  const onUrl = new URLSearchParams(location.search).get('produto') === st.p.slug;
+  if (drawer.el || sheet.el || !onUrl || pdpState !== st) {
+    // saiu do 3D para o carrinho: o produto fica fechado, como no "Adicionar" da página do produto
+    if (onUrl && !sheet.el) leaveProductUrl();
+    return;
+  }
+  showPdpSheet();
+  st.focus3D = null;
+  if (st.opener) sheet.lastFocus = st.opener;
+}
+
+// Para o roteador: o produto (ou o 3D dele) já está aberto?
+export function isProductOpen(slug) {
+  const p = S.bySlug[slug];
+  if (!p || !pdpState || pdpState.p.id !== p.id) return false;
+  return sheet.el?.id === 'product-sheet' || (sheet.el?.id === 'viewer3d-sheet' && view3d?.st === pdpState);
+}
+
+// Fecha o produto e o 3D dele sem mexer no histórico (voltar do navegador, troca de rota)
+export function closeProductLayers() {
+  if (sheet.el?.id === 'product-sheet' || (sheet.el?.id === 'viewer3d-sheet' && view3d)) {
+    view3d = null;
+    closeSheet(true, true);
+  }
 }
 
 export function initProductSheet() {
   const el = $('#product-sheet');
   el.addEventListener('click', async (e) => {
     if (!pdpState) return;
+    const b3d = e.target.closest('[data-pdp-3d]');
+    if (b3d) {
+      openPdp3D(b3d.getAttribute('data-pdp-3d'));
+      return;
+    }
     const img = e.target.closest('[data-img]');
     if (img) {
       pdpState.imgIndex = Number(img.dataset.img);

@@ -17,10 +17,12 @@
 //   micro-ondas ... electricOven (forno elétrico), builtIn, inox
 //   ar-condicionado portable (portátil/climatizador); senão split de parede
 
+import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
+
 /* ================================================================== */
 /* Utilitários                                                         */
 /* ================================================================== */
-const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const clamp =(v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const PI = Math.PI;
 
@@ -79,7 +81,13 @@ function slab(c, w, h, d, material, { radii = [0, 0, 0, 0], r, bevel = 0.003, pa
   const rad = r != null ? [r, r, r, r] : radii;
   const b = Math.max(0, Math.min(bevel, d / 2 - 2e-4, w / 4, h / 4));
   const shape = rrShape(c.THREE, w - 2 * b, h - 2 * b, rad.map((x) => Math.max(0, x - b)));
-  return c.kit.extrude(shape, d, material, { bevel: b, part, curveSegments: seg, bevelSegments: b > 0.006 ? 4 : 2 });
+  return smooth(c.kit.extrude(shape, d, material, { bevel: b, part, curveSegments: seg, bevelSegments: b > 0.012 ? 6 : b > 0.006 ? 4 : 2 }));
+}
+// O ExtrudeGeometry sai com normais por face (cantos e chanfros facetados no brilho do esmalte):
+// suaviza as faces vizinhas com menos de ~34° entre si e mantém as quinas vivas.
+function smooth(me, crease = 0.6) {
+  me.geometry = toCreasedNormals(me.geometry, crease);
+  return me;
 }
 
 // Sólido por seções superelípticas empilhadas (de baixo para cima).
@@ -397,13 +405,16 @@ function tvModel(spec, kit, THREE) {
   const { st, C, W, H, D, m, place } = c;
   const g = kit.group('tv');
   const monitor = !!st.monitor;
-  let stand = st.stand || (st.wallMount && !monitor ? 'wall' : monitor || W < 0.7 ? 'pedestal' : 'feet');
+  let stand = st.stand || (monitor || W < 0.7 ? 'pedestal' : 'feet');
   // moldura fina; tela 16:9
   const bz = clamp(W * 0.005, 0.004, 0.01);
   const bzB = bz * (monitor ? 2.2 : 1.7);
   const screenW = W - 2 * bz;
   let panelH = (screenW * 9) / 16 + bz + bzB;
   let standH = H - panelH;
+  // "com suporte de parede": a TV vai para a parede só quando a altura do spec é a do painel (sem pés);
+  // se sobra altura para os pés, ela fica de pé (a imagem continua 16:9, sem esticar)
+  if (!st.stand && st.wallMount && !monitor && standH < 0.03) stand = 'wall';
   if (stand === 'wall') {
     panelH = H;
     standH = 0;
@@ -417,10 +428,11 @@ function tvModel(spec, kit, THREE) {
   // espessuras: painel ultrafino + caixa de eletrônica atrás (metade de baixo)
   const tF = clamp(W * 0.005, 0.004, 0.008);
   let tB = clamp(D * 0.4, 0.012, monitor ? 0.045 : 0.05);
-  if (stand === 'wall') tB = Math.max(0.004, D - tF);
+  if (stand === 'wall') tB = clamp(D - tF, 0.004, 0.05);
   tB = Math.min(tB, Math.max(0.003, D - tF));
   const T = tF + tB;
-  const zF = T / 2; // frente da tela
+  // frente da tela: centrada nos pés; na parede, a frente fica em +D/2 e o suporte ocupa o resto até -D/2
+  const zF = stand === 'wall' ? D / 2 : T / 2;
   const y0 = standH;
   const frame = m.plastic(C.main || '#141414', { gloss: 0.35 });
   const back = m.plastic(kit.shade(C.main || '#141414', 0.06), { gloss: 0.15 });
@@ -466,7 +478,7 @@ function tvModel(spec, kit, THREE) {
     s.quadraticCurveTo(za - (L + za) * 0.25, hh * 0.9, -L, y0f + Math.min(0.005, hh * 0.4));
     const fw = clamp(W * 0.012, 0.008, 0.016);
     for (const sx of [-1, 1]) {
-      const f = kit.extrude(s, fw, footMat, { bevel: fbev, curveSegments: 10, part: 'metal' });
+      const f = smooth(kit.extrude(s, fw, footMat, { bevel: fbev, curveSegments: 10, part: 'metal' }));
       f.rotation.y = -PI / 2;
       f.position.set(sx * Math.min(bw / 2 - fw, W * 0.36), 0, 0);
       g.add(f);
@@ -501,8 +513,14 @@ function tvModel(spec, kit, THREE) {
     }
     g.add(place(kit.box(W - 0.09, 0.03, 0.018, wood, { r: 0.004, part: 'wood' }), { y: standH - 0.02, z: zb }));
   } else {
-    // parede: suporte fino atrás
-    g.add(place(kit.box(Math.min(0.3, W * 0.3), Math.min(0.2, panelH * 0.3), Math.max(0.002, Math.min(0.01, D - T)), footMat), { y: panelH * 0.55, z: zBackMin - Math.max(0.002, Math.min(0.01, D - T)) / 2 }));
+    // parede: placa fixada na parede (em -D/2) e braços até a caixa traseira
+    const gapD = Math.max(0.002, zBackMin + D / 2);
+    const plateT = Math.min(0.008, gapD);
+    const pw = Math.min(0.3, W * 0.3);
+    const py = panelH * 0.55;
+    g.add(place(kit.box(pw, Math.min(0.2, panelH * 0.3), plateT, footMat, { part: 'metal' }), { y: py, z: -D / 2 + plateT / 2 }));
+    const armL = gapD - plateT + 0.002;
+    if (armL > 0.004) for (const sx of [-1, 1]) g.add(place(kit.box(0.03, 0.03, armL, footMat, { r: 0.004, part: 'metal' }), { x: sx * pw * 0.3, y: py, z: -D / 2 + plateT + armL / 2 - 0.001 }));
   }
   return g;
 }
@@ -539,7 +557,7 @@ function uprightFridge(c) {
   const rMid = retro ? 0.022 : 0.006;
   // corpo
   const bodyH = H - plinth;
-  if (retro) g.add(place(slab(c, W, bodyH, bodyD, body, { radii: [rTop, rTop, rBot, rBot], bevel: 0.022, seg: 12, part: 'main' }), { y: plinth + bodyH / 2, z: zBack + bodyD / 2 }));
+  if (retro) g.add(place(slab(c, W, bodyH, bodyD, body, { radii: [rTop, rTop, rBot, rBot], bevel: 0.022, seg: 18, part: 'main' }), { y: plinth + bodyH / 2, z: zBack + bodyD / 2 }));
   else g.add(place(kit.box(W, bodyH, bodyD, body, { r: 0.008, part: 'main' }), { y: plinth + bodyH / 2, z: zBack + bodyD / 2 }));
   // rodapé com grade escura e pés
   g.add(place(kit.box(W - 0.05, plinth, bodyD - 0.06, shadowOf(c)), { y: plinth / 2, z: zBack + (bodyD - 0.06) / 2 + 0.01 }));
@@ -567,7 +585,7 @@ function uprightFridge(c) {
     doors.push({ x0: -W / 2, x1: 0, y0: ys, y1, role: 'fridge', side: 'right', vertical: true, disp: true });
     doors.push({ x0: 0, x1: W / 2, y0: ys, y1, role: 'fridge', side: 'left', vertical: true });
     doors.push({ x0: -W / 2, x1: W / 2, y0, y1: ys, role: 'drawer' });
-  } else if (!small && (st.duplex || st.inverse) && st.doors !== 1) {
+  } else if (!small && (st.duplex || st.inverse) && st.doors !== 1 && st.freezer !== 'vertical') {
     if (st.inverse) {
       const ys = y0 + (y1 - y0) * 0.32;
       doors.push({ x0: -W / 2, x1: W / 2, y0: ys, y1, role: 'fridge', side: open, near: 'bottom', disp: true, logo: true });
@@ -594,7 +612,7 @@ function uprightFridge(c) {
     const L = d.x0 <= -W / 2 + 1e-6;
     const R = d.x1 >= W / 2 - 1e-6;
     const radii = [atTop && L ? rTop : rMid, atTop && R ? rTop : rMid, atBot && R ? rBot : rMid, atBot && L ? rBot : rMid];
-    g.add(place(slab(c, w, h, doorSlabT, body, { radii, bevel: retro ? 0.017 : 0.004, seg: 12, part: 'main' }), { x: cx, y: cy, z: zDoor }));
+    g.add(place(slab(c, w, h, doorSlabT, body, { radii, bevel: retro ? 0.017 : 0.004, seg: retro ? 18 : 8, part: 'main' }), { x: cx, y: cy, z: zDoor }));
     // borracha de vedação (aparece nas frestas)
     g.add(place(slab(c, w - 0.02, h - 0.02, 0.006, m.rubber('#2a2b2c'), { radii: radii.map((r) => Math.max(0, r - 0.01)), bevel: 0 }), { x: cx, y: cy, z: zBodyF + 0.003 }));
     // puxadores
@@ -647,9 +665,14 @@ function uprightFridge(c) {
     }
   });
   // dobradiças (lado oposto ao puxador)
-  const hingeX = open === 'left' ? W / 2 - 0.035 : -W / 2 + 0.035;
+  // retrô: capa cromada da dobradiça no topo, logo depois da curva do canto (onde o topo já é reto),
+  // cobrindo a junção corpo/porta; nunca passa da altura total nem sai do contorno arredondado
   if (!st.sideBySide && !st.frenchDoor && retro) {
-    g.add(place(kit.box(0.05, 0.012, 0.03, chrome, { r: 0.004, part: 'metal' }), { x: hingeX, y: topY - 0.012, z: zBodyF + 0.002 }));
+    const hw = 0.045;
+    const hx = (open === 'left' ? 1 : -1) * Math.max(0, W / 2 - rTop - hw / 2 - 0.004);
+    const hz0 = zBodyF - 0.02;
+    const hz1 = zDoorF + 0.002;
+    g.add(place(kit.box(hw, 0.012, hz1 - hz0, chrome, { r: 0.004, part: 'metal' }), { x: hx, y: H - 0.006, z: (hz0 + hz1) / 2 }));
   }
   return g;
 }
@@ -1339,7 +1362,7 @@ function air_conditionerModel(spec, kit, THREE) {
   s.quadraticCurveTo(z1 - dd * 0.2, yb, z1 - dd * 0.32, yb);
   s.lineTo(z0 + 0.02, yb);
   s.quadraticCurveTo(z0, yb, z0, yb + 0.02);
-  const shell = kit.extrude(s, W, body, { bevel: b, curveSegments: 14, part: 'main' });
+  const shell = smooth(kit.extrude(s, W, body, { bevel: b, curveSegments: 14, part: 'main', bevelSegments: 4 }));
   shell.rotation.y = -PI / 2;
   g.add(shell);
   // z da frente numa altura y (amostrando o contorno)
@@ -1462,7 +1485,7 @@ function coffeeMaker(c) {
   const cy0 = y0 + 0.006;
   const ch = yHead0 - 0.012 - cy0;
   const prof = [[rc * 0.86, 0], [rc * 0.98, ch * 0.06], [rc, ch * 0.42], [rc * 0.93, ch * 0.66], [rc * 0.82, ch * 0.78], [rc * 0.84, ch * 0.86]].map(([r, y]) => [r, y + cy0]);
-  g.add(place(kit.lathe([[0.0001, cy0], ...prof], m.glass({ tint: '#dfe7ea', opacity: 0.22 }), { seg: 40 }), { z: zc }));
+  g.add(place(kit.lathe([[0.0001, cy0], ...prof], m.glass({ tint: '#cfd9dc', opacity: 0.1 }), { seg: 40 }), { z: zc }));
   g.add(place(kit.lathe([[0.0001, cy0 + 0.004], [rc * 0.9, cy0 + 0.004], [rc * 0.95, cy0 + ch * 0.06], [rc * 0.95, cy0 + ch * 0.36], [0.0001, cy0 + ch * 0.36]], m.plastic('#2a170c', { gloss: 0.25 }), { seg: 32 }), { z: zc }));
   g.add(place(kit.lathe([[rc * 0.84, cy0 + ch * 0.82], [rc * 0.87, cy0 + ch * 0.86], [rc * 0.87, cy0 + ch], [rc * 0.6, cy0 + ch], [0.0001, cy0 + ch]], m.plastic('#151515', { gloss: 0.6 }), { seg: 32, part: 'detail' }), { z: zc }));
   // alça da jarra (à esquerda)
@@ -1679,12 +1702,14 @@ function fan(c) {
   if (st.ceiling) return ceilingFan(c);
   const g = kit.group('ventilador');
   const body = smallBody(c);
-  const R = st.wallMount ? Math.min(W / 2, (H - 0.03) / 2) : Math.min(W / 2, (H - 0.08) / 2.2);
+  // a grade ocupa a largura toda sempre que a altura deixa espaço para base e coluna (bbox = spec)
+  const R = st.wallMount ? Math.min(W / 2, (H - 0.03) / 2) : Math.min(W / 2, (H - 0.06) / 2);
   const cy = H - R;
   const zc = st.wallMount ? D / 2 - 0.014 : Math.min(D / 2 - 0.035, R * 0.35);
   // base redonda e coluna
   const baseR = D / 2;
-  const baseA = Math.min(W / 2, baseR * 1.1);
+  // ventilador muito baixo para a largura: a base completa a largura do spec
+  const baseA = R < W / 2 - 0.003 ? W / 2 : Math.min(W / 2, baseR * 1.1);
   const wall = !!st.wallMount;
   const poleTop = cy - R * 0.2;
   if (wall) {
@@ -1872,11 +1897,11 @@ function iron(c) {
   s.lineTo(iw, -id);
   s.quadraticCurveTo(iw, id * 0.2, 0, id);
   s.quadraticCurveTo(-iw, id * 0.2, -iw, -id);
-  const sole = kit.extrude(s, 0.012, m.metal('#cfd2d4', { finish: 'brushed' }), { bevel: 0.002, part: 'metal' });
+  const sole = smooth(kit.extrude(s, 0.012, m.metal('#cfd2d4', { finish: 'brushed' }), { bevel: 0.002, part: 'metal' }));
   sole.rotation.x = -PI / 2;
   sole.position.y = 0.006;
   g.add(sole);
-  const top = kit.extrude(s, H * 0.4, body, { bevel: 0.01, part: 'main' });
+  const top = smooth(kit.extrude(s, H * 0.4, body, { bevel: 0.01, part: 'main' }));
   top.rotation.x = -PI / 2;
   top.scale.set(0.92, 0.92, 1);
   top.position.y = 0.012 + H * 0.2;

@@ -179,7 +179,7 @@ function dimsMarkup() {
 }
 
 function sheetMarkup({ name, uid, variants, canAdd }) {
-  return `<div class="v3d v3d--sheet is-loading" data-v3d>
+  return `<div class="v3d v3d--sheet is-loading${variants.length > 5 ? ' has-many-colors' : ''}" data-v3d>
     <div class="v3d__top">
       <div class="v3d__heading"><span class="v3d__chip">3D</span><h2 class="v3d__name" id="${uid}-title">${esc(name)}</h2></div>
       <button class="v3d__close" type="button" data-sheet-close data-v3d-close aria-label="Fechar 3D">${ICON.close}</button>
@@ -202,7 +202,7 @@ function sheetMarkup({ name, uid, variants, canAdd }) {
           <button class="v3d__btn" type="button" data-v3d-dims aria-pressed="false">${ICON.ruler}<span>Medidas</span></button>
           <div class="v3d__seg" role="group" aria-label="Vista"><span class="v3d__seg-k" aria-hidden="true">Vista</span>${viewButtons()}</div>
           <button class="v3d__btn v3d__btn--ar" type="button" data-v3d-ar hidden>${ICON.cube}<span>${T.ar}</span></button>
-          <span class="v3d__ar-hint" data-v3d-ar-hint hidden>${ICON.phone}${T.arDesk}</span>
+          <span class="v3d__ar-hint" data-v3d-ar-hint hidden>${ICON.phone}<span>${T.arDesk}</span></span>
         </div>
         ${canAdd ? `<button class="v3d__cta" type="button" data-v3d-add>${ICON.cart}<span>${T.add}</span></button>` : ''}
       </div>
@@ -455,6 +455,8 @@ function createViewer(host, o) {
     camera = stage.camera;
     camera.up.set(0, 1, 0);
     gl = stage.renderer.getContext();
+    // luz e objeto ficam parados: a sombra só é redesenhada quando o modelo muda (poupa bateria ao girar)
+    stage.renderer.shadowMap.autoUpdate = false;
     setupControls();
     setupEvents();
     layout();
@@ -497,6 +499,7 @@ function createViewer(host, o) {
     setState('ready');
     // aviso honesto só para modelo gerado (no embutido, só com a barra de ferramentas)
     if (noteEl) noteEl.hidden = source !== 'procedural' || (!sheetMode && !o.toolbar);
+    if (!sheetMode && o.toolbar) layout();
     updateAria();
     startAutoRotate();
     showHint();
@@ -521,6 +524,7 @@ function createViewer(host, o) {
 
   function showModel(res, { keepCamera }) {
     stage.setModel(res.group);
+    stage.renderer.shadowMap.needsUpdate = true;
     shown.add(res.group);
     const s = stage.bbox.getSize(new L.THREE.Vector3());
     dimOff = clamp(Math.max(s.x, s.y, s.z) * 0.07, 0.035, 0.14);
@@ -714,8 +718,14 @@ function createViewer(host, o) {
 
   /* ----- tamanho e área livre ----- */
   function measureInsets() {
-    if (!sheetMode) return { top: 0, bottom: 0, left: 0, right: 0 };
     const r = stageEl.getBoundingClientRect();
+    if (!sheetMode) {
+      // embutido: só a barrinha de cima e o aviso de baixo, quando aparecem
+      const mini = q('.v3d__mini');
+      const top = mini && mini.getClientRects().length ? Math.max(0, mini.getBoundingClientRect().bottom - r.top) + 2 : 0;
+      const bottom = noteEl && !noteEl.hidden && noteEl.getClientRects().length ? Math.max(0, r.bottom - noteEl.getBoundingClientRect().top) + 2 : 0;
+      return { top, bottom: Math.min(bottom, r.height * 0.3), left: 0, right: 0 };
+    }
     const top = topEl ? Math.max(0, topEl.getBoundingClientRect().bottom - r.top) + 4 : 0;
     const b = barEl && barEl.getClientRects().length ? barEl.getBoundingClientRect() : null;
     const bottom = b ? Math.max(0, r.bottom - b.top) + 4 : 0;
@@ -816,6 +826,9 @@ function createViewer(host, o) {
     };
     const f = (n) => n.toFixed(1);
     const place = [];
+    const C = P([c.x, c.y, c.z]); // centro do objeto na tela (para empurrar etiquetas para fora)
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const mid = new THREE.Vector3();
     for (const [k] of DIM_KEYS) {
       const g = svgEl.querySelector(`[data-dim="${k}"]`);
       const label = labelsEl.querySelector(`[data-dim-label="${k}"]`);
@@ -825,7 +838,11 @@ function createViewer(host, o) {
       const EA = P(L3.ea);
       const EB = P(L3.eb);
       const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
-      const ok = len > 34 && A[2] < 1 && B[2] < 1;
+      // esconde só a cota vista de ponta (encurtada pela perspectiva), não a de um produto fino (TV de 8 cm)
+      mid.set((L3.a[0] + L3.b[0]) / 2, (L3.a[1] + L3.b[1]) / 2, (L3.a[2] + L3.b[2]) / 2);
+      const worldLen = Math.hypot(L3.b[0] - L3.a[0], L3.b[1] - L3.a[1], L3.b[2] - L3.a[2]);
+      const full = (worldLen * size.h) / (2 * tanHalf * Math.max(0.01, camera.position.distanceTo(mid)));
+      const ok = len > 8 && len / full > 0.3 && A[2] < 1 && B[2] < 1;
       g.style.display = ok ? '' : 'none';
       label.style.display = ok ? '' : 'none';
       if (!ok) continue;
@@ -838,13 +855,30 @@ function createViewer(host, o) {
         'd',
         `M${f(A[0])} ${f(A[1])}L${f(B[0])} ${f(B[1])}M${f(A[0] - nx)} ${f(A[1] - ny)}L${f(A[0] + nx)} ${f(A[1] + ny)}M${f(B[0] - nx)} ${f(B[1] - ny)}L${f(B[0] + nx)} ${f(B[1] + ny)}`
       );
-      place.push([label, (A[0] + B[0]) / 2, (A[1] + B[1]) / 2]);
+      // normal da cota apontando para fora do objeto
+      let ox = -uy;
+      let oy = ux;
+      const mx = (A[0] + B[0]) / 2;
+      const my = (A[1] + B[1]) / 2;
+      if (ox * (mx - C[0]) + oy * (my - C[1]) < 0) {
+        ox = -ox;
+        oy = -oy;
+      }
+      place.push([label, mx, my, len, ox, oy]);
     }
     // etiquetas no meio da cota, sem sair da área livre (medidas guardadas até o texto mudar)
-    for (const [label, x, y] of place) {
+    for (const [label, mx, my, len, ox, oy] of place) {
       if (!label._w) {
         label._w = label.offsetWidth;
         label._h = label.offsetHeight;
+      }
+      let x = mx;
+      let y = my;
+      // cota curta: a etiqueta vai ao lado, sem cobrir a linha
+      if (len < Math.max(label._w, label._h) + 16) {
+        const ext = (label._w / 2) * Math.abs(ox) + (label._h / 2) * Math.abs(oy) + 8;
+        x += ox * ext;
+        y += oy * ext;
       }
       const hw = label._w / 2 + 6;
       const hh = label._h / 2 + 4;
@@ -959,6 +993,7 @@ function createViewer(host, o) {
     listen(root, 'click', (e) => {
       const t = e.target.closest('button');
       if (!t || !root.contains(t)) return;
+      hideHint();
       if (t.dataset.v3dVariant) setVariant(t.dataset.v3dVariant, { fromUser: true });
       else if (t.dataset.v3dView) setView(t.dataset.v3dView);
       else if ('v3dDims' in t.dataset) setDims(!dimsOn);
@@ -1175,7 +1210,7 @@ function createViewer(host, o) {
 }
 
 /* ---------- Janela da vitrine ---------- */
-let current = null;
+let current = null; // { v, finish } da janela aberta
 let clearTimer = 0;
 
 export function open3D({ product, category, parentCategory, variantId, onVariant, onAddToCart, onClose } = {}) {
@@ -1183,24 +1218,29 @@ export function open3D({ product, category, parentCategory, variantId, onVariant
   if (!el) throw new Error('#viewer3d-sheet não encontrado');
   if (!product) throw new Error('open3D: produto ausente');
   clearTimeout(clearTimer);
-  if (current) {
-    const old = current;
-    current = null;
-    old.dispose();
-  }
+  current?.finish();
   el.classList.add('sheet--3d');
   const v = createViewer(el, { mode: 'sheet', product, category, parentCategory, variantId, onVariant, onAddToCart });
-  current = v;
+  // Descarta ao fechar por qualquer caminho (X, Esc, sobreposição, ou outra janela abrindo por cima,
+  // que fecha esta sem chamar onClose)
+  const mo = new MutationObserver(() => {
+    if (!el.classList.contains('is-open')) finish();
+  });
+  const me = { v, finish };
+  function finish() {
+    mo.disconnect();
+    v.dispose();
+    if (current !== me) return;
+    current = null;
+    // limpa a marcação depois da animação de saída
+    clearTimer = setTimeout(() => {
+      if (!current && el.firstElementChild === v.root) el.innerHTML = '';
+    }, 300);
+  }
+  current = me;
   openSheet('viewer3d-sheet', {
     onClose: () => {
-      v.dispose();
-      if (current === v) {
-        current = null;
-        // limpa a marcação depois da animação de saída
-        clearTimer = setTimeout(() => {
-          if (!current && el.firstElementChild === v.root) el.innerHTML = '';
-        }, 300);
-      }
+      finish();
       try {
         onClose?.();
       } catch (err) {
@@ -1208,13 +1248,14 @@ export function open3D({ product, category, parentCategory, variantId, onVariant
       }
     },
   });
+  mo.observe(el, { attributes: true, attributeFilter: ['class'] });
   v.start();
   return {
     ready: v.ready,
     setVariant: v.setVariant,
     info: v.info,
     close: () => {
-      if (current === v && el.classList.contains('is-open')) closeSheet();
+      if (current === me && el.classList.contains('is-open')) closeSheet();
     },
     debug: v.debug,
   };

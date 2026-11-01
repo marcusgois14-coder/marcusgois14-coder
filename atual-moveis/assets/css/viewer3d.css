@@ -694,6 +694,49 @@
   pointer-events: none;
 }
 
+/* ---------- Telas largas: a dica de RA encolhe (reticências) em vez de quebrar a barra ---------- */
+@media (min-width: 1180px) {
+  /* numa linha só (itens encolhem); com muitas cores a barra volta a quebrar */
+  .v3d--sheet:not(.has-many-colors) .v3d__bar {
+    flex-wrap: nowrap;
+  }
+
+  /* só a dica encolhe (até 5 cores tudo cabe a partir de 1180 px) */
+  .v3d--sheet .v3d__colors {
+    flex: none;
+  }
+
+  .v3d--sheet .v3d__swatches {
+    flex: none;
+    flex-wrap: nowrap;
+  }
+
+  .v3d--sheet .v3d__color-name {
+    min-width: 0;
+  }
+
+  .v3d--sheet .v3d__tools {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .v3d--sheet .v3d__tools > :not(.v3d__ar-hint) {
+    flex: none;
+  }
+
+  .v3d--sheet .v3d__ar-hint {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .v3d--sheet .v3d__ar-hint span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
 /* ---------- Telas médias ---------- */
 @media (max-width: 1179px) {
   .v3d__ar-hint {
