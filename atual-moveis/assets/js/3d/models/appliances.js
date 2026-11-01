@@ -5,19 +5,25 @@
 // são desenhadas uma vez em canvas e reaproveitadas.
 //
 // Estilos lidos de spec.style (todos opcionais; model3d.style do produto pode forçar qualquer um):
-//   tv ............ screenIn, monitor, stand ('feet'|'pedestal'|'easel'|'wall'), wallMount, curved
+//   tv ............ screenIn, monitor, stand ('feet'|'pedestal'|'easel'|'wall'), wallMount
 //   geladeira ..... duplex, inverse, sideBySide, frenchDoor, frostFree, inox, retro/rounded, minibar,
-//                   wine (adega), freezer ('chest' = horizontal | 'vertical'), smart, open ('left'|'right')
+//                   wine (adega; "cervejeira" no nome ou beer: garrafas em pé), freezer ('chest' = horizontal,
+//                   lids ou "2 tampas" no nome | 'vertical'), smart, open ('left'|'right')
 //   lavadora ...... frontLoad, topLoad, dryer, tanquinho, inox
-//   fogão ......... burners, oven, cooktop, electric, induction, glass (mesa de vidro), inox, drawer
-//   eletroportátil  appliance: coffee_maker | blender | air_fryer | kettle | toaster | mixer | fan |
+//   fogão ......... burners, oven, cooktop, portable (fogareiro / fogão de mesa), electric, induction,
+//                   glass (mesa de vidro), inox, drawer
+//   eletroportátil  appliance: coffee_maker (espresso, capsule, moka) | blender (stick = mixer de mão) |
+//                   air_fryer | kettle | toaster | mixer | fan (ceiling; light ou "luminária" no nome) |
 //                   microwave | food_processor | juicer | rice_cooker | pressure_cooker | popcorn |
-//                   sandwich_maker | water_purifier | heater | speaker | iron | vacuum | hair_dryer |
-//                   hair_straightener | phone | tablet | laptop | console | generic; retro, inox, ceiling
-//   micro-ondas ... electricOven (forno elétrico), builtIn, inox
-//   ar-condicionado portable (portátil/climatizador); senão split de parede
+//                   sandwich_maker | water_purifier (bottle = bebedouro de garrafão) | heater | speaker |
+//                   iron | vacuum | hair_dryer | hair_straightener | phone | tablet | laptop | console |
+//                   generic; retro, inox
+//   micro-ondas ... electricOven (forno elétrico), builtIn (moldura de embutir, sem pés), inox
+//   ar-condicionado window (de janela), portable (portátil; cooler = climatizador); senão split de parede
+//   lava-louças .... dishwasher (no gerador da lavadora), places (serviços), countertop (de bancada), inox
+//   coifa ......... appliance 'range_hood', hood ('wall'|'island'|'flat' = depurador), glass (campânula de vidro)
+import { ceilingFanLayout } from '../infer.js';
 
-import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /* ================================================================== */
 /* Utilitários                                                         */
@@ -81,13 +87,84 @@ function slab(c, w, h, d, material, { radii = [0, 0, 0, 0], r, bevel = 0.003, pa
   const rad = r != null ? [r, r, r, r] : radii;
   const b = Math.max(0, Math.min(bevel, d / 2 - 2e-4, w / 4, h / 4));
   const shape = rrShape(c.THREE, w - 2 * b, h - 2 * b, rad.map((x) => Math.max(0, x - b)));
-  return smooth(c.kit.extrude(shape, d, material, { bevel: b, part, curveSegments: seg, bevelSegments: b > 0.012 ? 6 : b > 0.006 ? 4 : 2 }));
+  // (com normais suavizadas, 12 divisões por arco e 4–5 no chanfro já ficam lisas; mais que isso custava ~20 ms por peça)
+  return smooth(c.kit.extrude(shape, d, material, { bevel: b, part, curveSegments: seg, bevelSegments: b > 0.012 ? 5 : b > 0.006 ? 4 : 2 }));
 }
 // O ExtrudeGeometry sai com normais por face (cantos e chanfros facetados no brilho do esmalte):
 // suaviza as faces vizinhas com menos de ~34° entre si e mantém as quinas vivas.
 function smooth(me, crease = 0.6) {
-  me.geometry = toCreasedNormals(me.geometry, crease);
+  me.geometry = creaseNormals(me.geometry, crease);
   return me;
+}
+// Versão rápida do toCreasedNormals (three/addons): agrupa vértices coincidentes por hash numérico
+// (posição arredondada a 0,01 mm) em vez de chaves de texto, e não arredonda a 1 cm como o original
+// (que juntava vértices distintos dos chanfros pequenos). Custava ~30 ms numa geladeira retrô; agora ~3 ms.
+function creaseNormals(geometry, angle) {
+  const geo = geometry.index ? geometry.toNonIndexed() : geometry;
+  const p = geo.attributes.position.array;
+  const nv = p.length / 3;
+  const fn = new Float32Array(nv); // normal da face (por triângulo: 3 valores)
+  const nt = nv / 3;
+  for (let t = 0; t < nt; t++) {
+    const i = t * 9;
+    const ax = p[i + 3] - p[i];
+    const ay = p[i + 4] - p[i + 1];
+    const az = p[i + 5] - p[i + 2];
+    const bx = p[i + 6] - p[i];
+    const by = p[i + 7] - p[i + 1];
+    const bz = p[i + 8] - p[i + 2];
+    let x = ay * bz - az * by;
+    let y = az * bx - ax * bz;
+    let z = ax * by - ay * bx;
+    const l = Math.hypot(x, y, z) || 1;
+    fn[t * 3] = x / l;
+    fn[t * 3 + 1] = y / l;
+    fn[t * 3 + 2] = z / l;
+  }
+  const Q = 1e5;
+  const qx = new Int32Array(nv);
+  const qy = new Int32Array(nv);
+  const qz = new Int32Array(nv);
+  const buckets = new Map();
+  for (let v = 0; v < nv; v++) {
+    const x = (qx[v] = Math.round(p[v * 3] * Q));
+    const y = (qy[v] = Math.round(p[v * 3 + 1] * Q));
+    const z = (qz[v] = Math.round(p[v * 3 + 2] * Q));
+    const h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791)) | 0;
+    const list = buckets.get(h);
+    if (list) list.push(v);
+    else buckets.set(h, [v]);
+  }
+  const cd = Math.cos(angle);
+  const out = new Float32Array(nv * 3);
+  for (let v = 0; v < nv; v++) {
+    const t = (v / 3) | 0;
+    const nx = fn[t * 3];
+    const ny = fn[t * 3 + 1];
+    const nz = fn[t * 3 + 2];
+    const h = (Math.imul(qx[v], 73856093) ^ Math.imul(qy[v], 19349663) ^ Math.imul(qz[v], 83492791)) | 0;
+    let sx = 0;
+    let sy = 0;
+    let sz = 0;
+    for (const o of buckets.get(h)) {
+      if (qx[o] !== qx[v] || qy[o] !== qy[v] || qz[o] !== qz[v]) continue;
+      const u = ((o / 3) | 0) * 3;
+      const dx = fn[u];
+      const dy = fn[u + 1];
+      const dz = fn[u + 2];
+      if (nx * dx + ny * dy + nz * dz > cd) {
+        sx += dx;
+        sy += dy;
+        sz += dz;
+      }
+    }
+    const l = Math.hypot(sx, sy, sz) || 1;
+    out[v * 3] = sx / l;
+    out[v * 3 + 1] = sy / l;
+    out[v * 3 + 2] = sz / l;
+  }
+  geo.setAttribute('normal', new geo.attributes.position.constructor(out, 3));
+  return geo;
 }
 
 // Sólido por seções superelípticas empilhadas (de baixo para cima).
@@ -557,7 +634,7 @@ function uprightFridge(c) {
   const rMid = retro ? 0.022 : 0.006;
   // corpo
   const bodyH = H - plinth;
-  if (retro) g.add(place(slab(c, W, bodyH, bodyD, body, { radii: [rTop, rTop, rBot, rBot], bevel: 0.022, seg: 18, part: 'main' }), { y: plinth + bodyH / 2, z: zBack + bodyD / 2 }));
+  if (retro) g.add(place(slab(c, W, bodyH, bodyD, body, { radii: [rTop, rTop, rBot, rBot], bevel: 0.022, seg: 12, part: 'main' }), { y: plinth + bodyH / 2, z: zBack + bodyD / 2 }));
   else g.add(place(kit.box(W, bodyH, bodyD, body, { r: 0.008, part: 'main' }), { y: plinth + bodyH / 2, z: zBack + bodyD / 2 }));
   // rodapé com grade escura e pés
   g.add(place(kit.box(W - 0.05, plinth, bodyD - 0.06, shadowOf(c)), { y: plinth / 2, z: zBack + (bodyD - 0.06) / 2 + 0.01 }));
@@ -612,7 +689,7 @@ function uprightFridge(c) {
     const L = d.x0 <= -W / 2 + 1e-6;
     const R = d.x1 >= W / 2 - 1e-6;
     const radii = [atTop && L ? rTop : rMid, atTop && R ? rTop : rMid, atBot && R ? rBot : rMid, atBot && L ? rBot : rMid];
-    g.add(place(slab(c, w, h, doorSlabT, body, { radii, bevel: retro ? 0.017 : 0.004, seg: retro ? 18 : 8, part: 'main' }), { x: cx, y: cy, z: zDoor }));
+    g.add(place(slab(c, w, h, doorSlabT, body, { radii, bevel: retro ? 0.017 : 0.004, seg: retro ? 12 : 8, part: 'main' }), { x: cx, y: cy, z: zDoor }));
     // borracha de vedação (aparece nas frestas)
     g.add(place(slab(c, w - 0.02, h - 0.02, 0.006, m.rubber('#2a2b2c'), { radii: radii.map((r) => Math.max(0, r - 0.01)), bevel: 0 }), { x: cx, y: cy, z: zBodyF + 0.003 }));
     // puxadores
@@ -637,14 +714,14 @@ function uprightFridge(c) {
     }
     // plaqueta de marca (retrô: cromada) e visor digital
     if (d.logo) {
-      const lw = Math.min(0.2, W * 0.36);
+      // emblema curto e baixo-relevo (uma barra comprida no topo da porta parecia um terceiro puxador)
       if (retro) {
-        // plaqueta cromada estilo anos 50
-        const ly = d.y1 - Math.min(0.1, h * 0.28);
-        g.add(place(slab(c, lw * 0.8, 0.02, 0.005, chrome, { r: 0.0099, bevel: 0.0015, part: 'metal' }), { x: cx, y: ly, z: zDoorF + 0.001 }));
-        g.add(place(kit.box(lw * 0.62, 0.006, 0.001, m.flat('#6f7378', { roughness: 0.35, metalness: 1 })), { x: cx, y: ly, z: zDoorF + 0.0037 }));
+        // retrô: emblema oval cromado com miolo escuro, como as plaquetas dos anos 50
+        const ly = d.y1 - Math.min(0.085, h * 0.24);
+        g.add(place(slab(c, 0.07, 0.024, 0.004, chrome, { r: 0.0119, bevel: 0.0014, seg: 10, part: 'metal' }), { x: cx, y: ly, z: zDoorF }));
+        g.add(place(slab(c, 0.054, 0.012, 0.002, m.flat('#5d6166', { roughness: 0.35, metalness: 1 }), { r: 0.0059, bevel: 0.0006, seg: 8 }), { x: cx, y: ly, z: zDoorF + 0.0025 }));
       } else {
-        g.add(place(kit.box(lw * 0.6, 0.008, 0.0015, m.metal('#b9bcbf', { finish: 'brushed' })), { x: cx, y: d.y1 - 0.05, z: zDoorF + 0.0002 }));
+        g.add(place(kit.box(0.055, 0.007, 0.0012, m.metal('#b9bcbf', { finish: 'brushed' }), { r: 0.0005 }), { x: cx, y: d.y1 - 0.045, z: zDoorF + 0.0001 }));
       }
     }
     if (d.disp && !retro && !small && (st.frostFree || st.smart || st.sideBySide || st.frenchDoor || st.inverse)) {
@@ -679,19 +756,25 @@ function uprightFridge(c) {
 
 // Freezer horizontal: tampa por cima, puxador embutido, painel de controle e grade lateral
 function chestFreezer(c) {
-  const { kit, m, C, W, H, D, place } = c;
+  const { kit, m, spec, st, C, W, H, D, place } = c;
   const g = kit.group('freezer-horizontal');
   const fin = bodyFinish(c, { gloss: 0.6 });
   const feet = 0.02;
   const lidT = clamp(H * 0.09, 0.06, 0.09);
   const bodyH = H - feet - lidT;
   g.add(place(kit.box(W, bodyH, D, fin.mat, { r: 0.012, part: 'main' }), { y: feet + bodyH / 2 }));
-  // tampa com leve sobreposição e friso
-  g.add(place(kit.box(W, lidT - 0.004, D, fin.mat, { r: 0.016, part: 'main' }), { y: H - (lidT - 0.004) / 2 }));
+  // tampas ("2 tampas" no nome divide a tampa em duas, cada uma com o seu puxador)
+  const nLids = clamp(Number(st.lids) || Number((/(\d)\s*tampas?\b/i.exec(spec.label || '') || [])[1]) || (W > 1.3 ? 2 : 1), 1, 3);
+  const lidGap = nLids > 1 ? 0.006 : 0;
+  const lidW = (W - lidGap * (nLids - 1)) / nLids;
   g.add(place(kit.box(W - 0.01, 0.006, D - 0.01, m.rubber('#2a2b2c')), { y: feet + bodyH + 0.003 }));
-  // puxador embutido na frente da tampa
-  g.add(place(kit.box(Math.min(0.3, W * 0.3), 0.022, 0.012, m.plastic(kit.shade(C.main, -0.18), { gloss: 0.3 }), { r: 0.005 }), { y: H - lidT * 0.55, z: D / 2 - 0.006 }));
-  g.add(place(kit.box(Math.min(0.26, W * 0.26), 0.008, 0.001, shadowOf(c)), { y: H - lidT * 0.62, z: D / 2 + 0.0002 }));
+  for (let i = 0; i < nLids; i++) {
+    const lx = -W / 2 + lidW / 2 + i * (lidW + lidGap);
+    g.add(place(kit.box(lidW, lidT - 0.004, D, fin.mat, { r: 0.016, part: 'main' }), { x: lx, y: H - (lidT - 0.004) / 2 }));
+    // puxador embutido na frente da tampa
+    g.add(place(kit.box(Math.min(0.3, lidW * 0.42), 0.022, 0.012, m.plastic(kit.shade(C.main, -0.18), { gloss: 0.3 }), { r: 0.005 }), { x: lx, y: H - lidT * 0.55, z: D / 2 - 0.006 }));
+    g.add(place(kit.box(Math.min(0.26, lidW * 0.36), 0.008, 0.001, shadowOf(c)), { x: lx, y: H - lidT * 0.62, z: D / 2 + 0.0002 }));
+  }
   // painel (termostato) e grade do compressor
   g.add(place(kit.box(0.12, 0.05, 0.004, blackGloss(c), { r: 0.006 }), { x: W / 2 - 0.12, y: feet + bodyH - 0.06, z: D / 2 - 0.0005 }));
   g.add(place(kit.box(0.006, 0.006, 0.002, m.flat('#39d353', { emissive: '#2bd14a' })), { x: W / 2 - 0.15, y: feet + bodyH - 0.06, z: D / 2 + 0.0012 }));
@@ -705,7 +788,7 @@ function chestFreezer(c) {
 
 // Adega / cervejeira: porta de vidro escura com garrafas deitadas em prateleiras de madeira
 function wineCooler(c) {
-  const { kit, m, C, W, H, D, place } = c;
+  const { kit, m, spec, st, C, W, H, D, place } = c;
   const g = kit.group('adega');
   const fin = bodyFinish(c, { gloss: 0.5 });
   const body = isDark(kit, C.main) || C.main === '#f2f2f2' ? m.plastic('#151617', { gloss: 0.4 }) : fin.mat;
@@ -714,19 +797,61 @@ function wineCooler(c) {
   const plinth = 0.05;
   const bodyD = D - handleP - doorT;
   const zF = -D / 2 + bodyD;
-  g.add(place(kit.box(W, H - plinth, bodyD, body, { r: 0.006, part: 'main' }), { y: plinth + (H - plinth) / 2, z: -D / 2 + bodyD / 2 }));
-  g.add(place(kit.box(W - 0.02, plinth, bodyD - 0.02, shadowOf(c)), { y: plinth / 2, z: -D / 2 + bodyD / 2 }));
-  g.add(place(kit.box(W - 0.04, plinth * 0.6, 0.006, m.plastic('#202123', { gloss: 0.2 })), { y: plinth / 2, z: zF - 0.004 }));
+  const beer = !!st.beer || /cervej/i.test(spec.label || '');
   // interior visível
   const iw = W - 0.07;
   const ih = H - plinth - 0.12;
   const iy0 = plinth + 0.06;
-  g.add(place(kit.box(iw, ih, 0.004, m.flat('#1d1a18', { roughness: 0.9 })), { y: iy0 + ih / 2, z: zF + 0.002 }));
-  const shelves = Math.max(2, Math.floor(ih / 0.1));
+  if (beer) {
+    // cervejeira: gabinete oco (garrafas em pé lá dentro, vistas pelo vidro), fundo escuro e luz de LED no teto
+    const wall = (W - iw) / 2;
+    const yb = plinth;
+    const hh = H - plinth;
+    const zc = -D / 2 + bodyD / 2;
+    g.add(place(kit.box(W, hh, 0.03, body, { r: 0.006, part: 'main' }), { y: yb + hh / 2, z: -D / 2 + 0.015 }));
+    for (const sx of [-1, 1]) g.add(place(kit.box(wall, hh, bodyD, body, { r: 0.004, part: 'main' }), { x: sx * (W / 2 - wall / 2), y: yb + hh / 2, z: zc }));
+    g.add(place(kit.box(iw + 0.002, H - (iy0 + ih), bodyD, body, { part: 'main' }), { y: (iy0 + ih + H) / 2, z: zc }));
+    g.add(place(kit.box(iw + 0.002, iy0 - yb, bodyD, body, { part: 'main' }), { y: (yb + iy0) / 2, z: zc }));
+    g.add(place(kit.box(iw, ih, 0.002, m.flat('#16181a', { roughness: 0.8 })), { y: iy0 + ih / 2, z: -D / 2 + 0.031 }));
+    g.add(place(kit.box(iw * 0.7, 0.004, 0.01, m.flat('#ffffff', { emissive: '#e8f4ff' })), { y: iy0 + ih - 0.003, z: zF - 0.04 }));
+  } else {
+    g.add(place(kit.box(W, H - plinth, bodyD, body, { r: 0.006, part: 'main' }), { y: plinth + (H - plinth) / 2, z: -D / 2 + bodyD / 2 }));
+    g.add(place(kit.box(iw, ih, 0.004, m.flat('#1d1a18', { roughness: 0.9 })), { y: iy0 + ih / 2, z: zF + 0.002 }));
+  }
+  g.add(place(kit.box(W - 0.02, plinth, bodyD - 0.02, shadowOf(c)), { y: plinth / 2, z: -D / 2 + bodyD / 2 }));
+  g.add(place(kit.box(W - 0.04, plinth * 0.6, 0.006, m.plastic('#202123', { gloss: 0.2 })), { y: plinth / 2, z: zF - 0.004 }));
+  const shelves = beer ? Math.max(2, Math.floor(ih / 0.22)) : Math.max(2, Math.floor(ih / 0.1));
   const wood = m.wood(C.wood || '#a87a4c', { grain: 'smooth' });
   const glassBottle = m.glass({ tint: '#1d3b22', opacity: 0.85 });
   const per = Math.max(1, Math.floor(iw / 0.085));
-  for (let s = 0; s < shelves; s++) {
+  if (beer) {
+    // cervejeira: prateleiras aramadas com long necks em pé e latas
+    const wire = m.metal('#b9bcbf', { finish: 'chrome' });
+    const amber = m.glass({ tint: '#5a2c0c', opacity: 0.92 });
+    const capM = m.metal('#d4b24c', { finish: 'chrome' });
+    const cans = [m.metal('#c8202a', { finish: 'brushed' }), m.metal('#d9dadb', { finish: 'brushed' }), m.metal('#1f4fa0', { finish: 'brushed' })];
+    const lvl = ih / shelves;
+    const bh = Math.min(0.2, lvl - 0.03);
+    const br = Math.min(0.029, bh * 0.15);
+    const nb = Math.max(2, Math.floor(iw / (br * 2 + 0.012)));
+    for (let s = 0; s < shelves; s++) {
+      const y0 = iy0 + s * lvl + 0.006;
+      g.add(place(kit.box(iw, 0.006, bodyD * 0.7, wire, { part: 'metal' }), { y: y0 - 0.003, z: zF - bodyD * 0.35 }));
+      for (let b = 0; b < nb; b++) {
+        const bx = -iw / 2 + (iw * (b + 0.5)) / nb;
+        const bz = zF - br - 0.012 - (b % 2) * 0.012;
+        if ((b + s) % 3 === 2) {
+          // lata
+          const chH = Math.min(0.122, bh * 0.62);
+          g.add(place(kit.cylinder(br * 0.95, br * 0.95, chH, cans[(b + s) % cans.length], { seg: 16, part: 'detail' }), { x: bx, y: y0 + chH / 2, z: bz }));
+        } else {
+          g.add(place(kit.lathe([[0.0001, 0], [br, 0], [br, bh * 0.58], [br * 0.42, bh * 0.8], [br * 0.36, bh * 0.97], [0.0001, bh * 0.97]], amber, { seg: 14, part: 'detail' }), { x: bx, y: y0, z: bz }));
+          g.add(place(kit.cylinder(br * 0.4, br * 0.4, bh * 0.04, capM, { seg: 10 }), { x: bx, y: y0 + bh * 0.98, z: bz }));
+        }
+      }
+    }
+  }
+  for (let s = 0; !beer && s < shelves; s++) {
     const y = iy0 + (ih * (s + 0.5)) / shelves;
     g.add(place(kit.box(iw, 0.012, 0.02, wood, { part: 'wood' }), { y: y - 0.04, z: zF + 0.012 }));
     for (let b = 0; b < per; b++) {
@@ -757,6 +882,7 @@ function wineCooler(c) {
 function washerModel(spec, kit, THREE) {
   const c = ctx(spec, kit, THREE);
   const { st } = c;
+  if (st.dishwasher) return dishwasher(c);
   if (st.frontLoad && !st.topLoad) return frontLoader(c);
   return topLoader(c);
 }
@@ -986,6 +1112,54 @@ function topLoader(c) {
   return g;
 }
 
+// Lava-louças: corpo de lavadora com porta basculante lisa, painel de comandos no alto e rodapé recuado.
+// De bancada (até 6 serviços / "compacta"): sem rodapé, com visor de vidro na porta e pezinhos.
+function dishwasher(c) {
+  const { kit, m, st, C, W, H, D, place } = c;
+  const g = kit.group('lava-loucas');
+  const fin = bodyFinish(c, { gloss: 0.45 });
+  const body = fin.mat;
+  const dark = isDark(kit, C.main) || fin.steel;
+  const bench = !!st.countertop || H < 0.6;
+  const feetH = bench ? 0.012 : 0;
+  const toe = bench ? 0 : clamp(H * 0.1, 0.06, 0.1);
+  const doorT = 0.02;
+  const handleP = 0.028;
+  const bodyD = D - doorT - handleP;
+  const zB = -D / 2;
+  const zF = zB + bodyD;
+  const r = 0.006;
+  // corpo (laterais e tampo) e rodapé escuro recuado
+  g.add(place(kit.box(W, H - Math.max(toe, feetH), bodyD, body, { r, seg: 3, part: 'main' }), { y: Math.max(toe, feetH) + (H - Math.max(toe, feetH)) / 2, z: zB + bodyD / 2 }));
+  if (toe) g.add(place(kit.box(W - 0.02, toe, bodyD - 0.05, m.plastic('#1d1e20', { gloss: 0.2 }), { r: 0.003, part: 'detail' }), { y: toe / 2, z: zB + (bodyD - 0.05) / 2 }));
+  else feet4(c, g, W, bodyD, feetH, { r: 0.012, inset: 0.04, z: zB + bodyD / 2 });
+  // painel de comandos (faixa no alto da frente) com visor e botões
+  const panelH = clamp(H * 0.1, 0.05, 0.09);
+  const y0 = Math.max(toe, feetH);
+  const panelMat = fin.steel || dark ? blackGloss(c) : m.plastic(kit.shade(C.main, -0.05), { gloss: 0.5 });
+  g.add(place(slab(c, W - 0.004, panelH, doorT, panelMat, { r: 0.003, part: 'accent' }), { y: H - panelH / 2 - 0.002, z: zF }));
+  const pz = zF + doorT + 0.0006;
+  g.add(place(decal(c, Math.min(0.08, W * 0.18), panelH * 0.42, displayMat(c, '1:45', '#5fd1ff')), { x: W * 0.12, y: H - panelH / 2 - 0.002, z: pz }));
+  const btn = m.plastic(fin.steel || dark ? '#c9cbcd' : '#8d9094', { gloss: 0.5 });
+  for (let i = 0; i < 5; i++) g.add(place(kit.cylinder(0.006, 0.006, 0.004, btn, { seg: 12, part: 'detail' }), { x: -W * 0.36 + i * Math.min(0.035, W * 0.07), y: H - panelH / 2 - 0.002, z: pz + 0.0015, rx: PI / 2 }));
+  g.add(place(knob(c, Math.min(0.016, panelH * 0.25), 0.01, { material: btn, ring: false }), { x: W * 0.36, y: H - panelH / 2 - 0.002, z: pz - 0.0005 }));
+  // porta basculante (abre para baixo): lisa, com puxador horizontal no alto
+  const doorH = H - panelH - y0 - 0.006;
+  const doorY = y0 + 0.002 + doorH / 2;
+  g.add(place(slab(c, W - 0.004, doorH, doorT, body, { r: 0.004, part: 'main' }), { y: doorY, z: zF }));
+  if (bench) {
+    // visor de vidro escuro na porta (modelos de bancada)
+    g.add(place(slab(c, W * 0.62, doorH * 0.5, 0.004, m.glass({ tint: '#22292e', opacity: 0.85 }), { r: 0.012, part: 'detail' }), { y: doorY - doorH * 0.04, z: zF + doorT - 0.001 }));
+  } else {
+    // linha discreta na base da porta e etiqueta de marca
+    g.add(place(kit.box(W - 0.03, 0.002, 0.001, m.flat(dark ? '#0e0f10' : '#c9ccd0')), { y: y0 + 0.03, z: zF + doorT + 0.0004 }));
+    g.add(place(kit.box(0.06, 0.01, 0.0015, m.metal('#c4c7ca', { finish: 'brushed' }), { r: 0.002 }), { y: doorY + doorH * 0.28, z: zF + doorT + 0.0006 }));
+  }
+  const hdl = barHandle(c, Math.min(0.42, W * 0.62), handleP, { material: fin.steel ? brushedOf(c) : chromeOf(c), horizontal: true });
+  g.add(place(hdl, { y: y0 + doorH - Math.min(0.06, doorH * 0.12), z: zF + doorT }));
+  return g;
+}
+
 /* ================================================================== */
 /* Fogão e cooktop                                                     */
 /* ================================================================== */
@@ -1082,7 +1256,7 @@ function coilBurner(c, r) {
   }
   pts.push([r * 1.05, 0.009, pts[pts.length - 1][2]]);
   const coilMat = c.m.metal('#2a2b2d', { finish: 'brushed' });
-  g.add(kit.tube(pts, Math.max(0.0032, r * 0.045), coilMat, { seg: N * 2, radial: 6, part: 'detail' }));
+  g.add(kit.tube(pts, Math.max(0.0032, r * 0.045), coilMat, { seg: N, radial: 6, part: 'detail' }));
   for (const a of [0.3, 0.3 + PI * 0.66, 0.3 + PI * 1.33]) {
     g.add(c.place(kit.box(r * 1.7, 0.003, 0.004, coilMat), { y: 0.008, ry: a }));
   }
@@ -1227,8 +1401,41 @@ function range(c) {
   return g;
 }
 
+// Fogareiro / fogão de mesa: caixa baixa esmaltada, mesa de inox com bocas e trempes, botões na frente
+function portableStove(c) {
+  const { kit, m, st, C, W, H, D, place } = c;
+  const g = kit.group('fogareiro');
+  const n = clamp(Math.round(st.burners || 1), 1, 4);
+  const fin = bodyFinish(c, { gloss: 0.7 });
+  const knobP = 0.016;
+  const bodyD = D - knobP;
+  const zc = -D / 2 + bodyD / 2;
+  const zF = -D / 2 + bodyD;
+  const gh = Math.min(0.03, H * 0.3);
+  const feet = 0.008;
+  const yTop = H - gh;
+  const topT = 0.006;
+  const bodyH = yTop - topT - feet;
+  g.add(place(kit.box(W, bodyH, bodyD, fin.mat, { r: Math.min(0.01, bodyH / 4), part: 'main' }), { y: feet + bodyH / 2, z: zc }));
+  const topM = fin.steel || st.inox || !isDark(kit, C.main) ? brushedOf(c, '#c9cbcd') : m.paint('#151515', { gloss: 0.6 });
+  g.add(place(kit.box(W, topT, bodyD, topM, { r: 0.002, part: 'metal' }), { y: yTop - topT / 2, z: zc }));
+  // bocas: em fila quando são 1 ou 2
+  const zones = n <= 2 ? zoneLayout(n, W - 0.04, bodyD).map(([x, , r]) => [x, 0, Math.min(r, bodyD * 0.3)]) : zoneLayout(n, W - 0.04, bodyD - 0.02);
+  zones.forEach(([zx, zz, r]) => {
+    g.add(place(gasBurner(c, r * 0.75), { x: zx, y: yTop, z: zc + zz }));
+    const gs = Math.min(r * 2.3, (W - 0.03) / n, bodyD - 0.03);
+    g.add(place(grate(c, gs, gh), { x: zx, y: yTop, z: zc + zz }));
+  });
+  // botões (um por boca) na frente
+  const kr = Math.min(0.016, bodyH * 0.32);
+  zones.forEach(([zx], i) => g.add(place(knob(c, kr, knobP, { material: m.plastic('#1a1b1c', { gloss: 0.5 }), ring: false }), { x: n <= 2 ? zx : -W * 0.3 + (i * W * 0.6) / (n - 1), y: feet + bodyH / 2, z: zF })));
+  feet4(c, g, W, bodyD, feet, { r: 0.008, inset: 0.025, z: zc });
+  return g;
+}
+
 function cooktop(c) {
   const { kit, m, st, C, W, H, D, place } = c;
+  if (st.portable) return portableStove(c);
   const g = kit.group('cooktop');
   const n = clamp(Math.round(st.burners || 4), 1, 6);
   const type = st.induction || st.electric || st.glass ? 'glass' : 'gas';
@@ -1280,20 +1487,32 @@ function microwaveModel(spec, kit, THREE) {
   const fin = bodyFinish(c, { gloss: 0.55 });
   const dark = isDark(kit, C.main);
   const oven = !!st.electricOven;
-  const feetH = oven ? 0.02 : 0.01;
+  const built = !!st.builtIn;
+  const feetH = built ? 0 : oven ? 0.02 : 0.01;
   const handleP = oven ? 0.032 : 0.014;
   const doorT = 0.012;
   const bodyD = D - handleP - doorT;
   const zB = -D / 2;
   const zF = zB + bodyD;
   const bodyH = H - feetH;
-  g.add(place(kit.box(W, bodyH, bodyD, fin.mat, { r: 0.01, part: 'main' }), { y: feetH + bodyH / 2, z: zB + bodyD / 2 }));
-  feet4(c, g, W, bodyD, feetH, { r: oven ? 0.014 : 0.01, inset: 0.04, z: zB + bodyD / 2 });
+  // de embutir: a caixa fica atrás de uma moldura de acabamento (largura e altura totais), sem pés
+  const mx = built ? clamp(W * 0.045, 0.018, 0.035) : 0;
+  const my = built ? clamp(H * 0.05, 0.014, 0.03) : 0;
+  if (built) {
+    g.add(place(kit.box(W - 2 * mx, bodyH - 2 * my, bodyD - 0.006, fin.mat, { r: 0.006, part: 'main' }), { y: bodyH / 2, z: zB + (bodyD - 0.006) / 2 }));
+    const trim = fin.steel ? m.metal(C.main, { finish: 'brushed' }) : m.plastic(dark ? '#121314' : C.main, { gloss: 0.6 });
+    for (const [w, h, x, y] of [[W, my, 0, H - my / 2], [W, my, 0, my / 2], [mx, H - 2 * my, -W / 2 + mx / 2, H / 2], [mx, H - 2 * my, W / 2 - mx / 2, H / 2]]) {
+      g.add(place(kit.box(w, h, 0.012, trim, { r: 0.002, part: 'main' }), { x, y, z: zF - 0.006 + doorT / 2 }));
+    }
+  } else {
+    g.add(place(kit.box(W, bodyH, bodyD, fin.mat, { r: 0.01, part: 'main' }), { y: feetH + bodyH / 2, z: zB + bodyD / 2 }));
+    feet4(c, g, W, bodyD, feetH, { r: oven ? 0.014 : 0.01, inset: 0.04, z: zB + bodyD / 2 });
+  }
   // porta (vidro escuro) e painel lateral
-  const pw = Math.min(oven ? 0.12 : 0.13, W * 0.27);
-  const dw = W - pw - 0.012;
-  const dh = bodyH - 0.016;
-  const dcx = -W / 2 + 0.006 + dw / 2;
+  const pw = Math.min(oven ? 0.12 : 0.13, (W - 2 * mx) * 0.27);
+  const dw = W - 2 * mx - pw - 0.012;
+  const dh = bodyH - 2 * my - 0.016;
+  const dcx = -W / 2 + mx + 0.006 + dw / 2;
   const dcy = feetH + bodyH / 2;
   const zd = zF + doorT / 2;
   const doorMat = dark || fin.steel || oven ? m.plastic('#0d0e0f', { gloss: 0.9 }) : m.plastic(C.main, { gloss: 0.7 });
@@ -1306,7 +1525,7 @@ function microwaveModel(spec, kit, THREE) {
   g.add(place(decal(c, ww, wh, oven ? ovenInterior(c) : meshWindow(c)), { x: wx, y: wy, z: zF + doorT + 0.0019 }));
   g.add(place(kit.box(ww, wh, 0.0015, m.glass({ tint: '#30363a', opacity: 0.25 })), { x: wx, y: wy, z: zF + doorT + 0.0028 }));
   // painel de controle
-  const px = W / 2 - 0.006 - pw / 2;
+  const px = W / 2 - mx - 0.006 - pw / 2;
   const panelMat = fin.steel ? m.metal(C.main, { finish: 'brushed' }) : dark || oven ? m.plastic('#1a1b1d', { gloss: 0.6 }) : m.plastic(kit.shade(C.main, -0.03), { gloss: 0.6 });
   g.add(place(slab(c, pw, dh, doorT, panelMat, { r: 0.006, bevel: 0.002, part: 'main' }), { x: px, y: dcy, z: zd }));
   const pz = zF + doorT;
@@ -1331,7 +1550,7 @@ function microwaveModel(spec, kit, THREE) {
     g.add(place(barHandle(c, dh * 0.7, handleP, { material: dark || fin.steel ? brushedOf(c) : m.plastic(kit.shade(C.main, -0.05), { gloss: 0.6 }), rod: 0.006 }), { x: dcx + dw / 2 - 0.018, y: dcy, z: pz }));
   }
   // saídas de ar na lateral direita
-  for (let i = 0; i < 8; i++) g.add(place(kit.box(0.001, 0.004, Math.min(0.12, bodyD * 0.35), m.flat('#111')), { x: W / 2 - 0.0002, y: feetH + bodyH * 0.65 + i * 0.009, z: zB + bodyD * 0.3 }));
+  if (!built) for (let i = 0; i < 8; i++) g.add(place(kit.box(0.001, 0.004, Math.min(0.12, bodyD * 0.35), m.flat('#111')), { x: W / 2 - 0.0002, y: feetH + bodyH * 0.65 + i * 0.009, z: zB + bodyD * 0.3 }));
   return g;
 }
 
@@ -1341,7 +1560,8 @@ function microwaveModel(spec, kit, THREE) {
 function air_conditionerModel(spec, kit, THREE) {
   const c = ctx(spec, kit, THREE);
   const { st, m, C, W, H, D, place } = c;
-  if (st.portable || H > Math.max(W, D) * 1.2) return portableAC(c);
+  if (st.window) return windowAC(c);
+  if (st.portable || H > Math.max(W, D) * 1.2) return st.cooler || /climatizador/i.test(spec.label || '') ? portableAC(c) : portableUnit(c);
   const g = kit.group('split');
   const body = m.plastic(C.main, { gloss: 0.45 });
   const b = Math.min(0.008, W * 0.02);
@@ -1396,7 +1616,93 @@ function air_conditionerModel(spec, kit, THREE) {
   for (let i = 0; i < 5; i++) g.add(place(kit.box(W - 0.08, 0.0008, 0.006, m.flat('#9a9da1')), { y: H - 0.0003, z: -D / 2 + 0.03 + i * 0.014 }));
   return g;
 }
-// Ar portátil / climatizador: torre com grade frontal, painel no topo e rodízios
+// Ar-condicionado de janela: gabinete de chapa, frente com aletas de saída (alto), grade de entrada,
+// botões à direita e venezianas nas laterais da parte que fica do lado de fora
+function windowAC(c) {
+  const { kit, m, C, W, H, D, place } = c;
+  const g = kit.group('ar-janela');
+  const front = m.plastic(C.main, { gloss: 0.4 });
+  const cab = m.metal(kit.shade(C.main, -0.06), { finish: 'painted' });
+  const dark = m.plastic('#2a2c2f', { gloss: 0.2 });
+  const fT = 0.03;
+  const kP = 0.014; // os botões avançam além do painel frontal
+  const zf = D / 2 - kP;
+  // gabinete (atrás) e painel frontal
+  g.add(place(kit.box(W - 0.008, H - 0.008, D - fT - kP, cab, { r: 0.006, part: 'main' }), { y: H / 2, z: -D / 2 + (D - fT - kP) / 2 }));
+  g.add(place(slab(c, W, H, fT, front, { r: 0.012, bevel: 0.004, part: 'main' }), { y: H / 2, z: zf - fT / 2 }));
+  const cw = W * 0.26;
+  const gx0 = -W / 2 + 0.02;
+  const gx1 = W / 2 - cw - 0.008;
+  const gw = gx1 - gx0;
+  const gcx = (gx0 + gx1) / 2;
+  // saída de ar: recesso escuro com 4 aletas inclinadas
+  const oy0 = H * 0.66;
+  const oy1 = H - 0.022;
+  g.add(place(kit.box(gw, oy1 - oy0, 0.004, dark, { r: 0.004 }), { x: gcx, y: (oy0 + oy1) / 2, z: zf - 0.0015 }));
+  for (let i = 0; i < 4; i++) g.add(place(kit.box(gw - 0.008, 0.012, 0.004, front, { r: 0.0015, part: 'main' }), { x: gcx, y: oy0 + ((i + 0.5) * (oy1 - oy0)) / 4, z: zf + 0.0005, rx: -0.5 }));
+  // grade de entrada: frisos horizontais finos
+  const iy0 = 0.022;
+  const iy1 = oy0 - 0.016;
+  g.add(place(kit.box(gw, iy1 - iy0, 0.003, dark, { r: 0.004 }), { x: gcx, y: (iy0 + iy1) / 2, z: zf - 0.001 }));
+  const nS = Math.max(6, Math.floor((iy1 - iy0) / 0.011));
+  for (let i = 0; i < nS; i++) g.add(place(kit.box(gw - 0.006, 0.0055, 0.003, front, { part: 'main' }), { x: gcx, y: iy0 + ((i + 0.5) * (iy1 - iy0)) / nS, z: zf + 0.0006 }));
+  // controles: 2 botões giratórios (mecânico) com marcações
+  const kx = W / 2 - cw / 2 - 0.004;
+  g.add(place(kit.box(cw - 0.02, H - 0.05, 0.002, m.plastic(kit.shade(C.main, -0.05), { gloss: 0.4 }), { r: 0.006 }), { x: kx, y: H / 2, z: zf + 0.0002 }));
+  for (const ky of [H * 0.66, H * 0.36]) {
+    g.add(place(decal(c, 0.05, 0.05, printMat(c, 'dial', 256, 256, drawDial, 'rgba(70,74,80,0.85)')), { x: kx, y: ky, z: zf + 0.0014 }));
+    g.add(place(knob(c, Math.min(0.016, cw * 0.15), kP, { material: m.plastic('#e9eaec', { gloss: 0.6 }), ring: false }), { x: kx, y: ky, z: zf }));
+  }
+  // venezianas nas laterais (parte de trás, que fica para fora da janela) e grade traseira
+  const lz0 = -D / 2 + 0.03;
+  const lz1 = zf - fT - 0.03;
+  for (const sx of [-1, 1]) {
+    for (let r = 0; r < 3; r++) {
+      for (let k = 0; k < 4; k++) {
+        const z = lerp(lz0, lz1, (k + 0.5) / 4);
+        g.add(place(kit.box(0.002, H * 0.2, Math.min(0.012, (lz1 - lz0) / 8), m.flat('#3a3c3f')), { x: sx * (W / 2 - 0.004 + 0.0005), y: H * (0.22 + r * 0.27), z }));
+      }
+    }
+  }
+  g.add(place(kit.box(W - 0.04, H - 0.04, 0.002, m.metal('#6a6d70', { finish: 'brushed' })), { y: H / 2, z: -D / 2 + 0.0008 }));
+  return g;
+}
+
+// Ar-condicionado portátil: torre lisa, saída de ar no topo, painel digital, grade lateral e duto atrás
+function portableUnit(c) {
+  const { kit, m, C, W, H, D, place } = c;
+  const g = kit.group('ar-portatil');
+  const body = m.plastic(C.main, { gloss: 0.45 });
+  const dark = m.plastic('#2a2c2f', { gloss: 0.3 });
+  const wheel = 0.03;
+  const bodyH = H - wheel;
+  const r = Math.min(0.045, W * 0.1);
+  g.add(place(kit.box(W, bodyH, D, body, { r, seg: 4, part: 'main' }), { y: wheel + bodyH / 2 }));
+  // saída de ar no topo (frente) com aletas
+  const tw = W - 2 * r - 0.01;
+  const td = Math.min(0.13, D * 0.36);
+  const tz = D / 2 - r - td / 2 - 0.006;
+  g.add(place(kit.box(tw, 0.003, td, dark, { r: 0.0012 }), { y: H - 0.0015, z: tz }));
+  for (let i = 0; i < 6; i++) g.add(place(kit.box(tw - 0.006, 0.0025, 0.009, body, { part: 'main' }), { y: H - 0.0012, z: tz - td / 2 + ((i + 0.5) * td) / 6 }));
+  // painel no topo (atrás da saída) com visor
+  g.add(place(kit.box(tw * 0.5, 0.002, 0.05, m.plastic('#0d0e0f', { gloss: 0.9 }), { r: 0.002 }), { y: H - 0.001, z: tz - td / 2 - 0.04 }));
+  g.add(place(decal(c, 0.05, 0.018, displayMat(c, '18°', '#6fd3ff', { w: 128, h: 48 })), { y: H + 0.0004, z: tz - td / 2 - 0.04, rx: -PI / 2 }));
+  // frente: faixa de acabamento e luz de status
+  g.add(place(kit.box(W - 2 * r, 0.002, 0.001, m.flat('#b9bcbf')), { y: wheel + bodyH * 0.72, z: D / 2 + 0.0003 }));
+  g.add(place(kit.box(0.006, 0.006, 0.001, m.flat('#39d0ff', { emissive: '#2bb8ff' })), { y: wheel + bodyH * 0.8, z: D / 2 + 0.0004 }));
+  // grades de entrada nas laterais
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < 9; i++) g.add(place(kit.box(0.001, 0.006, D * 0.5, m.flat('#3a3c3f')), { x: sx * (W / 2 + 0.0003), y: wheel + bodyH * (0.18 + i * 0.045), z: -D * 0.05 }));
+  }
+  // duto de exaustão: bocal redondo na traseira (sem sair da caixa)
+  g.add(place(disc(c, [[0.0001, 0.002], [0.06, 0.002], [0.065, 0], [0.075, 0], [0.075, 0.004]], dark, { seg: 32, part: 'detail' }), { y: wheel + bodyH * 0.62, z: -D / 2 + 0.006, rx: -PI / 2 }));
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    g.add(place(kit.cylinder(wheel / 2, wheel / 2, 0.016, rubberOf(c), { seg: 16 }), { x: sx * (W / 2 - 0.04), y: wheel / 2, z: sz * (D / 2 - 0.04), rz: PI / 2 }));
+  }
+  return g;
+}
+
+// Climatizador evaporativo: torre com grade frontal, painel no topo e rodízios
 function portableAC(c) {
   const { kit, m, C, W, H, D, place } = c;
   const g = kit.group('ar-portatil');
@@ -1450,33 +1756,48 @@ function coffeeMaker(c) {
   // corpo contínuo: torre atrás (costas e laterais retas) que avança para a frente na cabeça
   const tD = D * 0.56;
   const tz = -D / 2 + tD / 2;
-  const yHead0 = H * 0.6;
-  const yHead1 = H * 0.885;
+  // cabeça alta (metade de cima, como nas cafeteiras retrô) e jarra mais baixa; cúpula mais marcada acima do friso
+  const yHead0 = H * 0.53;
+  const yHead1 = H * 0.87;
   const aW = (W / 2) * 0.985;
+  const hU = Math.min(0.035, (yHead1 - yHead0) * 0.4);
+  // a cabeça afina um pouco até o friso (perfil "bala" das retrô); costas sempre retas em -D/2
+  const TAP = retro ? 0.07 : 0.03;
+  const kAt = (y) => 1 - TAP * Math.pow(clamp((y - yHead0 - hU) / (yHead1 - yHead0 - hU), 0, 1), 1.6);
   const ring = (y, front) => {
-    const bb = (front + D / 2) / 2;
-    return [y, aW, bb, -D / 2 + bb];
+    const k = kAt(y);
+    const bb = ((front + D / 2) / 2) * k;
+    return [y, aW * k, bb, -D / 2 + bb];
   };
   const rings = [ring(baseH - 0.002, -D / 2 + tD), ring(yHead0 - 0.01, -D / 2 + tD)];
-  const hU = Math.min(0.035, (yHead1 - yHead0) * 0.4);
   for (let i = 0; i <= 6; i++) {
     const t = i / 6;
     rings.push(ring(yHead0 + hU * (1 - Math.cos((t * PI) / 2)), lerp(-D / 2 + tD, (D / 2) * 0.985, Math.sin((t * PI) / 2))));
   }
-  rings.push(ring(yHead1, (D / 2) * 0.985));
+  for (let i = 1; i <= 4; i++) rings.push(ring(lerp(yHead0 + hU, yHead1, i / 4), (D / 2) * 0.985));
   g.add(loft(c, rings, body, { n, seg: 72, part: 'main' }));
-  // friso cromado
+  // friso cromado e cúpula, na medida da cabeça já afinada
+  const kT = kAt(yHead1);
+  const bF = ((D / 2) * 0.985 + D / 2) / 2; // meia profundidade da cabeça sem afinar
   const ringH = 0.004;
-  g.add(loft(c, [[yHead1, W / 2 * 0.99, D / 2 * 0.99], [yHead1 + ringH, W / 2 * 0.99, D / 2 * 0.99]], trim, { n, seg: 72, part: 'metal' }));
+  const rA = (W / 2) * 0.99 * kT;
+  const rB = bF * 1.005 * kT;
+  const rz = -D / 2 + bF * kT;
+  g.add(loft(c, [[yHead1, rA, rB, rz], [yHead1 + ringH, rA, rB, rz]], trim, { n, seg: 72, part: 'metal' }));
   const dome = [];
   const yd0 = yHead1 + ringH;
-  for (let i = 0; i <= 7; i++) {
-    const t = i / 7;
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8;
     const ang = (t * PI) / 2;
     const k = Math.cos(ang) * 0.985 + 0.0001;
-    dome.push([yd0 + (H - yd0) * Math.sin(ang), (W / 2) * Math.max(0.02, k), (D / 2) * Math.max(0.02, k), 0, 0, lerp(n, 2.2, t)]);
+    dome.push([yd0 + (H - yd0) * Math.sin(ang), aW * kT * Math.max(0.02, k), bF * kT * Math.max(0.02, k), rz, 0, lerp(n, 2.2, t)]);
   }
   g.add(loft(c, dome, body, { n, seg: 72, capBottom: false, part: 'main' }));
+  // frente da cabeça (z) numa altura y e posição x, já com o afinamento
+  const headZ = (x, y) => {
+    const k = kAt(y);
+    return -D / 2 + bF * k + superZ(x, aW * k, bF * k, n);
+  };
   // jarra de vidro com café e placa aquecedora
   const rc = Math.min(W * 0.33, D * 0.2);
   const zc = D / 2 - rc - D * 0.045;
@@ -1492,30 +1813,39 @@ function coffeeMaker(c) {
   const hx0 = -rc * 0.86;
   g.add(place(kit.tube([[hx0, cy0 + ch * 0.92, 0], [hx0 - rc * 0.55, cy0 + ch * 0.9, 0], [hx0 - rc * 0.68, cy0 + ch * 0.6, 0], [hx0 - rc * 0.6, cy0 + ch * 0.3, 0], [hx0 - rc * 0.1, cy0 + ch * 0.24, 0]], Math.min(0.009, rc * 0.15), m.plastic('#151515', { gloss: 0.6 }), { seg: 40, radial: 10, part: 'detail' }), { z: zc }));
   g.add(place(kit.tube([[hx0 - rc * 0.62, cy0 + ch * 0.82, 0], [hx0 - rc * 0.7, cy0 + ch * 0.6, 0], [hx0 - rc * 0.62, cy0 + ch * 0.38, 0]], Math.min(0.0045, rc * 0.08), chromeOf(c), { seg: 24, radial: 8, part: 'metal' }), { z: zc + Math.min(0.006, rc * 0.1) }));
-  // saída do filtro sob a cabeça
-  g.add(place(kit.cylinder(rc * 0.5, rc * 0.5, 0.004, m.plastic('#111', { gloss: 0.3 }), { seg: 24 }), { y: yHead0 - 0.001, z: zc }));
+  // saída do filtro sob a cabeça: sobe até dentro da cabeça (a parte de baixo da cabeça é curva, um disco solto flutuava)
+  const outH = hU + 0.006;
+  g.add(place(kit.cylinder(rc * 0.5, rc * 0.5, outH, m.plastic('#111', { gloss: 0.3 }), { seg: 24 }), { y: yHead0 - 0.003 + outH / 2, z: zc }));
   // botões e visor de água
   const by = yHead0 + (yHead1 - yHead0) * 0.32;
   const bxs = [-W * 0.3, -W * 0.18, -W * 0.06];
   bxs.forEach((bx, i) => {
-    const bz = superZ(bx, (W / 2) * 0.985, (D / 2) * 0.985, n);
+    const bz = headZ(bx, by);
     const bm = i === 0 ? m.plastic('#d9dbdd', { gloss: 0.8 }) : m.plastic('#f2f2f2', { gloss: 0.8 });
     g.add(place(kit.cylinder(0.0065, 0.0065, 0.006, chromeOf(c), { seg: 18, part: 'metal' }), { x: bx, y: by, z: bz - 0.001, rx: PI / 2 }));
     g.add(place(kit.cylinder(0.005, 0.005, 0.004, bm, { seg: 18 }), { x: bx, y: by, z: bz + 0.002, rx: PI / 2 }));
   });
-  g.add(place(kit.box(0.003, 0.0016, 0.001, m.flat('#3ad1ff', { emissive: '#3ad1ff' })), { x: bxs[2], y: by + 0.0112, z: superZ(bxs[2], W / 2, D / 2, n) }));
+  g.add(place(kit.box(0.003, 0.0016, 0.001, m.flat('#3ad1ff', { emissive: '#3ad1ff' })), { x: bxs[2], y: by + 0.0112, z: headZ(bxs[2], by + 0.0112) + 0.0004 }));
   // visor de água: faixa vertical com moldura cromada na frente direita da cabeça
-  const wx = W * 0.3;
-  const wa = aW;
-  const wb = (D / 2) * 0.985;
+  const wh = (yHead1 - yHead0) * 0.62;
+  const wy = (yHead0 + yHead1) / 2 + 0.008;
+  const kw = kAt(wy);
+  const wa = aW * kw;
+  const wb = bF * kw;
+  const wx = W * 0.3 * kw;
   const t = Math.min(0.999, wx / wa);
   const dzdx = -(wb / wa) * Math.pow(t, n - 1) * Math.pow(Math.max(1e-4, 1 - Math.pow(t, n)), 1 / n - 1);
   const wry = Math.atan2(-dzdx, 1);
-  const wz = superZ(wx, wa, wb, n);
-  const wh = (yHead1 - yHead0) * 0.62;
-  const wy = (yHead0 + yHead1) / 2 + 0.008;
-  g.add(place(kit.box(0.014, wh, 0.004, trim, { r: 0.0019, part: 'metal' }), { x: wx, y: wy, z: wz - 0.0005, ry: wry }));
-  g.add(place(kit.box(0.008, wh - 0.008, 0.002, m.plastic('#0e1012', { gloss: 0.9 })), { x: wx + Math.sin(wry) * 0.0016, y: wy, z: wz + Math.cos(wry) * 0.0016, ry: wry }));
+  // inclina junto com a cabeça (que afina para cima): topo e base encostados na superfície
+  const zTop = headZ(W * 0.3 * kAt(wy + wh / 2), wy + wh / 2);
+  const zBot = headZ(W * 0.3 * kAt(wy - wh / 2), wy - wh / 2);
+  const wz = (zTop + zBot) / 2;
+  const wrx = Math.atan2(zBot - zTop, wh);
+  const visor = kit.group('visor');
+  visor.add(kit.box(0.014, wh, 0.004, trim, { r: 0.0019, part: 'metal' }));
+  visor.add(c.place(kit.box(0.008, wh - 0.008, 0.002, m.plastic('#0e1012', { gloss: 0.9 })), { z: 0.0021 }));
+  visor.rotation.order = 'YXZ';
+  g.add(place(visor, { x: wx, y: wy, z: wz - 0.0005, ry: wry, rx: wrx }));
   void tz;
   return g;
 }
@@ -1774,24 +2104,35 @@ function ceilingFan(c) {
   const { kit, m, C, W, H, place, THREE } = c;
   const g = kit.group('ventilador-teto');
   const body = smallBody(c);
-  const hubH = Math.min(0.12, H * 0.3);
-  g.add(kit.lathe([[0.0001, 0], [0.06, 0], [0.09, 0.03], [0.09, hubH * 0.8], [0.05, hubH], [0.0001, hubH]], body, { seg: 40, part: 'main' }));
-  g.add(place(kit.cylinder(0.012, 0.012, H - hubH - 0.05, body, { seg: 12, part: 'main' }), { y: hubH + (H - hubH - 0.05) / 2 }));
+  // "com luminária / lâmpada / LED": cúpula de vidro fosco sob o motor (o resto sobe na mesma altura total)
+  const light = !!c.st.light || /lumin[aá]ria|l[aâ]mpadas?|\bled\b|\bluz\b/i.test(c.spec.label || '');
+  const lightH = light ? Math.min(0.1, H * 0.22) : 0;
+  const hubH = Math.min(0.12, (H - lightH) * 0.3);
+  if (light) {
+    g.add(kit.lathe([[0.0001, 0], [0.03, 0.002], [0.07, lightH * 0.35], [0.085, lightH * 0.8], [0.08, lightH + 0.002], [0.0001, lightH + 0.002]], m.glass({ tint: '#fbf6ea', opacity: 0.85 }), { seg: 40, part: 'detail' }));
+    g.add(place(kit.sphere(0.035, m.flat('#fff6df', { emissive: '#fff1cc' }), { seg: 16 }), { y: lightH * 0.55 }));
+  }
+  g.add(kit.lathe([[0.0001, lightH], [0.06, lightH], [0.09, lightH + 0.03], [0.09, lightH + hubH * 0.8], [0.05, lightH + hubH], [0.0001, lightH + hubH]], body, { seg: 40, part: 'main' }));
+  g.add(place(kit.cylinder(0.012, 0.012, H - lightH - hubH - 0.05, body, { seg: 12, part: 'main' }), { y: lightH + hubH + (H - lightH - hubH - 0.05) / 2 }));
   g.add(place(kit.lathe([[0.0001, 0], [0.04, 0], [0.07, 0.04], [0.07, 0.05], [0.0001, 0.05]], body, { seg: 32, part: 'main' }), { y: H - 0.05 }));
   const blades = bladesOf(c, 4);
   const wood = c.st.woodLook ? m.wood(C.wood, { grain: 'smooth' }) : m.wood('#8a5a36', { grain: 'smooth' });
+  // com 3, 5 ou 6 pás o círculo não fecha a caixa: a pá mais aberta encosta na largura (mesma conta do infer)
+  const lay = ceilingFanLayout(blades, W);
   for (let i = 0; i < blades; i++) {
     const piv = new THREE.Group();
-    const bl = W / 2 - 0.08;
+    const bl = Math.max(0.05, lay.tip - 0.08);
     const blade = kit.box(bl, 0.006, 0.12, wood, { r: 0.002, part: 'wood' });
     blade.position.x = 0.08 + bl / 2;
     blade.rotation.x = 0.12;
     piv.add(blade);
     piv.add(c.place(kit.box(0.08, 0.008, 0.03, m.metal('#2a2b2d', { finish: 'brushed' })), { x: 0.07 }));
-    piv.rotation.y = (i / blades) * PI * 2;
-    piv.position.y = hubH * 0.55;
+    piv.rotation.y = -(lay.phase + (i / blades) * PI * 2);
+    piv.position.y = lightH + hubH * 0.55;
     g.add(piv);
   }
+  // número ímpar de pás: o conjunto fica deslocado em Z; recentra pela caixa das pás
+  if (Math.abs(lay.zc) > 1e-4) g.children.forEach((o) => (o.position.z -= lay.zc));
   return g;
 }
 
@@ -1885,28 +2226,91 @@ function speaker(c) {
   return g;
 }
 
-// Ferro de passar: base em ponta, corpo e alça
+// Casca que afina para cima: o contorno 2D [x, z] se repete em níveis [y, sx, sz] (escala ancorada em z = zb),
+// com tampa no último nível. Usada no ferro de passar (costas retas, frente inclinada até a ponta).
+function taperShell(c, outline, levels, material, { zb = 0, part } = {}) {
+  const THREE = c.THREE;
+  const n = outline.length;
+  const P = [];
+  const side = [];
+  levels.forEach(([y, sx, sz]) => outline.forEach(([x, z]) => P.push(x * sx, y, zb + (z - zb) * sz)));
+  for (let j = 0; j < levels.length - 1; j++) {
+    for (let i = 0; i < n; i++) {
+      const a = j * n + i;
+      const b = j * n + ((i + 1) % n);
+      side.push([a, b, (j + 1) * n + i], [b, (j + 1) * n + ((i + 1) % n), (j + 1) * n + i]);
+    }
+  }
+  const [yT, sxT, szT] = levels[levels.length - 1];
+  const base = P.length / 3;
+  const contour = outline.map(([x, z]) => new THREE.Vector2(x * sxT, zb + (z - zb) * szT));
+  outline.forEach(([x, z]) => P.push(x * sxT, yT, zb + (z - zb) * szT));
+  const top = THREE.ShapeUtils.triangulateShape(contour, []).map(([a, b, d]) => [base + a, base + b, base + d]);
+  // orientação: laterais com normal para fora e tampa para cima (independe do sentido do contorno)
+  const v = (i) => new THREE.Vector3(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+  const nrm = ([a, b, d]) => v(b).sub(v(a)).cross(v(d).sub(v(a)));
+  const cx = outline.reduce((s, p) => s + p[0], 0) / n;
+  const cz = zb + (outline.reduce((s, p) => s + p[1], 0) / n - zb) * levels[0][2];
+  const t0 = side[0];
+  const out = v(t0[0]).sub(new THREE.Vector3(cx, v(t0[0]).y, cz));
+  const flipSide = nrm(t0).dot(out) < 0;
+  const flipTop = top.length && nrm(top[0]).y < 0;
+  const I = [];
+  side.forEach(([a, b, d]) => (flipSide ? I.push(a, d, b) : I.push(a, b, d)));
+  top.forEach(([a, b, d]) => (flipTop ? I.push(a, d, b) : I.push(a, b, d)));
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  geo.setIndex(I);
+  geo.computeVertexNormals();
+  return c.kit.mesh(geo, material, { part });
+}
+
+// Ferro de passar: base de inox em ponta (frente +Z), corpo que afina e sobe para trás, alça fechada e botões
 function iron(c) {
-  const { kit, m, W, H, D, place, THREE } = c;
+  const { kit, m, C, W, H, D, place, THREE } = c;
   const g = kit.group('ferro');
   const body = smallBody(c);
+  const iw = W / 2 - 0.0008;
+  const id = D / 2 - 0.0008;
+  // contorno visto de cima (x, z): costas retas e laterais que se fecham numa ponta
   const s = new THREE.Shape();
-  const iw = W / 2 - 0.002;
-  const id = D / 2 - 0.002;
-  s.moveTo(-iw, -id);
-  s.lineTo(iw, -id);
-  s.quadraticCurveTo(iw, id * 0.2, 0, id);
-  s.quadraticCurveTo(-iw, id * 0.2, -iw, -id);
-  const sole = smooth(kit.extrude(s, 0.012, m.metal('#cfd2d4', { finish: 'brushed' }), { bevel: 0.002, part: 'metal' }));
-  sole.rotation.x = -PI / 2;
-  sole.position.y = 0.006;
+  s.moveTo(-iw * 0.9, -id);
+  s.lineTo(iw * 0.9, -id);
+  s.quadraticCurveTo(iw, -id, iw, -id * 0.86);
+  s.bezierCurveTo(iw, id * 0.15, iw * 0.5, id * 0.78, 0, id);
+  s.bezierCurveTo(-iw * 0.5, id * 0.78, -iw, id * 0.15, -iw, -id * 0.86);
+  s.quadraticCurveTo(-iw, -id, -iw * 0.9, -id);
+  // base de inox (rotação +90° em x: o y do contorno vira +z, a ponta fica na frente)
+  const soleT = Math.min(0.012, H * 0.08);
+  const sole = smooth(kit.extrude(s, soleT, m.metal('#cfd2d4', { finish: 'brushed' }), { bevel: Math.min(0.002, soleT / 3), curveSegments: 10, part: 'metal' }));
+  sole.rotation.x = PI / 2;
+  sole.position.y = soleT / 2;
   g.add(sole);
-  const top = smooth(kit.extrude(s, H * 0.4, body, { bevel: 0.01, part: 'main' }));
-  top.rotation.x = -PI / 2;
-  top.scale.set(0.92, 0.92, 1);
-  top.position.y = 0.012 + H * 0.2;
-  g.add(top);
-  g.add(kit.tube([[0, H * 0.5, -D * 0.38], [0, H - 0.015, -D * 0.25], [0, H - 0.015, D * 0.15], [0, H * 0.55, D * 0.3]], 0.014, body, { seg: 40, radial: 12, part: 'main' }));
+  // corpo: casca afinando (costas fixas em -z, frente recua conforme sobe)
+  const pts = s.getPoints(10);
+  const outline = pts.slice(0, pts.length - (pts[0].distanceTo(pts[pts.length - 1]) < 1e-6 ? 1 : 0)).map((p) => [p.x, p.y]);
+  const yB = soleT - 0.001;
+  const yT = H * 0.52;
+  const levels = [
+    [yB, 0.965, 0.97],
+    [yB + 0.006, 0.975, 0.975],
+    [lerp(yB, yT, 0.35), 0.93, 0.88],
+    [lerp(yB, yT, 0.7), 0.82, 0.74],
+    [lerp(yB, yT, 0.92), 0.7, 0.62],
+    [yT, 0.62, 0.56],
+  ];
+  g.add(taperShell(c, outline, levels, body, { zb: -id, part: 'main' }));
+  // faixa translúcida do reservatório na frente do corpo
+  g.add(place(kit.box(W * 0.5, (yT - yB) * 0.36, 0.004, m.glass({ tint: '#9cc7e0', opacity: 0.55 }), { r: 0.0015 }), { y: lerp(yB, yT, 0.42), z: id * 0.5, rx: -0.75 }));
+  // alça fechada: poste traseiro, pega por cima e apoio na frente
+  const hr = Math.min(0.013, W * 0.11);
+  const handleMat = isDark(kit, C.main) ? body : m.plastic(kit.shade(C.main, -0.12), { gloss: 0.55 });
+  g.add(kit.tube([[0, yT - 0.01, -id * 0.78], [0, H - hr, -id * 0.62], [0, H - hr, id * 0.12], [0, lerp(yB, yT, 0.8), id * 0.34]], hr, handleMat, { seg: 48, radial: 12, smooth: false, part: 'main' }));
+  // botões de vapor/spray na frente da pega e seletor de temperatura no topo do corpo
+  g.add(place(kit.box(0.012, 0.006, 0.016, trimOf(c), { r: 0.002 }), { y: H - hr * 0.35, z: id * 0.02 }));
+  g.add(place(kit.cylinder(Math.min(0.018, W * 0.15), Math.min(0.02, W * 0.17), 0.006, trimOf(c), { seg: 24, part: 'detail' }), { y: yT + 0.002, z: -id * 0.35 }));
+  // bota do cabo na traseira
+  g.add(place(kit.cylinder(0.007, 0.009, 0.03, m.plastic('#1a1b1c', { gloss: 0.3 }), { seg: 12 }), { y: yT * 0.6, z: -id + 0.014, rx: PI / 2 }));
   return g;
 }
 
@@ -1920,11 +2324,19 @@ function vacuum(c) {
     g.add(place(kit.cylinder(W * 0.08, W * 0.08, 0.004, m.plastic('#111', { gloss: 0.8 }), { seg: 24 }), { y: H, z: W * 0.15 }));
     return g;
   }
-  g.add(place(kit.box(W, 0.05, Math.min(D, 0.1), body, { r: 0.015, part: 'main' }), { y: 0.025, z: D / 2 - Math.min(D, 0.1) / 2 }));
-  g.add(place(kit.cylinder(0.016, 0.016, H * 0.55, m.metal('#c9cbcd', { finish: 'brushed' }), { seg: 14 }), { y: 0.05 + H * 0.275 }));
-  g.add(place(kit.cylinder(0.05, 0.055, H * 0.25, m.glass({ tint: '#c9d6dd', opacity: 0.45 }), { seg: 28 }), { y: H * 0.68, z: -0.01 }));
-  g.add(place(kit.box(0.08, H * 0.12, 0.1, body, { r: 0.02, part: 'main' }), { y: H * 0.85 }));
-  g.add(kit.tube([[0, H * 0.9, 0.0], [0, H - 0.015, -0.03], [0, H - 0.02, -D / 2]], 0.013, m.plastic('#1a1b1c', { gloss: 0.4 }), { seg: 20, radial: 10 }));
+  // bocal no chão (frente) com articulação; o tubo entra no bocal (antes ficava solto atrás dele)
+  const nd = Math.min(D * 0.6, 0.1);
+  const nz = D / 2 - nd / 2;
+  const zt = D / 2 - nd * 0.72;
+  g.add(place(kit.box(W, 0.045, nd, body, { r: 0.015, part: 'main' }), { y: 0.0225, z: nz }));
+  g.add(place(kit.box(W - 0.02, 0.006, 0.012, m.rubber('#2a2b2c')), { y: 0.003, z: D / 2 - 0.012 }));
+  g.add(place(kit.sphere(0.024, m.plastic('#1a1b1c', { gloss: 0.4 }), { seg: 16 }), { y: 0.05, z: zt }));
+  g.add(place(kit.cylinder(0.016, 0.016, H * 0.56, m.metal('#c9cbcd', { finish: 'brushed' }), { seg: 14, part: 'metal' }), { y: 0.05 + H * 0.28, z: zt }));
+  // reservatório de pó transparente, motor e cabo (pega para trás)
+  g.add(place(kit.cylinder(0.05, 0.055, H * 0.25, m.glass({ tint: '#c9d6dd', opacity: 0.45 }), { seg: 28 }), { y: H * 0.68, z: zt - 0.01 }));
+  g.add(place(kit.box(0.08, H * 0.12, 0.1, body, { r: 0.02, part: 'main' }), { y: H * 0.85, z: zt - 0.01 }));
+  g.add(kit.tube([[0, H * 0.9, zt - 0.01], [0, H - 0.015, zt - 0.04], [0, H - 0.02, -D / 2 + 0.013]], 0.013, m.plastic('#1a1b1c', { gloss: 0.4 }), { seg: 20, radial: 10 }));
+  g.add(place(kit.sphere(0.013, m.plastic('#1a1b1c', { gloss: 0.4 }), { seg: 12 }), { y: H - 0.02, z: -D / 2 + 0.013 }));
   return g;
 }
 
@@ -1984,6 +2396,71 @@ function slabDevice(c, kind) {
   return g;
 }
 
+// Coifa: campânula (tronco de pirâmide) com faixa de comandos embaixo e chaminé até o topo.
+//   wall: chaminé encostada atrás (parede); island: chaminé no centro; flat (depurador): caixa fina.
+function frustum(c, wB, dB, wT, dT, h, zT, material, { part } = {}) {
+  // caixa com a face de cima reduzida (wT x dT) e deslocada em Z (zT = centro do topo); base centrada
+  const geo = new c.THREE.BoxGeometry(1, 1, 1);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    if (y > 0) pos.setXYZ(i, x * wT, h / 2, zT + z * dT);
+    else pos.setXYZ(i, x * wB, -h / 2, z * dB);
+  }
+  geo.computeVertexNormals();
+  return c.kit.mesh(geo, material, { part });
+}
+function rangeHood(c) {
+  const { kit, m, st, C, W, H, D, place } = c;
+  const g = kit.group('coifa');
+  const fin = bodyFinish(c, { gloss: 0.5 });
+  const body = fin.mat;
+  const dark = isDark(kit, C.main) || fin.steel;
+  const btn = m.plastic(dark ? '#d0d2d4' : '#3a3c3f', { gloss: 0.5 });
+  const filter = m.metal('#8d9196', { finish: 'brushed' });
+  const glow = m.flat('#fff3d6', { emissive: '#ffe7b0' });
+  const controls = (y, z, w) => {
+    for (let i = 0; i < 4; i++) g.add(place(kit.box(0.014, 0.01, 0.004, btn, { r: 0.002, part: 'detail' }), { x: w / 2 - 0.05 - i * 0.022, y, z: z + 0.002 }));
+    g.add(place(kit.box(0.006, 0.004, 0.002, m.flat('#36c2ff', { emissive: '#36c2ff' })), { x: w / 2 - 0.05 - 4 * 0.022, y, z: z + 0.001 }));
+  };
+  const underside = (y, w, d, zc = 0) => {
+    // filtro metálico e duas lâmpadas embaixo (aparecem quando a câmera olha de baixo)
+    g.add(place(kit.box(w * 0.8, 0.002, d * 0.7, filter, { part: 'detail' }), { y: y - 0.001, z: zc }));
+    for (const sx of [-1, 1]) g.add(place(kit.cylinder(0.018, 0.018, 0.002, glow, { seg: 16, part: 'detail' }), { x: sx * w * 0.3, y: y - 0.0015, z: zc + d * 0.28 }));
+  };
+  if (st.hood === 'flat' || H < 0.3) {
+    // depurador: caixa fina com frente de comandos levemente saliente
+    const fp = Math.min(0.012, D * 0.04);
+    g.add(place(kit.box(W, H, D - fp, body, { r: Math.min(0.008, H * 0.15), seg: 3, part: 'main' }), { y: H / 2, z: -fp / 2 }));
+    const fh = Math.min(H * 0.7, 0.06);
+    g.add(place(slab(c, W - 0.01, fh, fp, dark ? blackGloss(c) : m.plastic(kit.shade(C.main, -0.06), { gloss: 0.6 }), { r: 0.003, part: 'accent' }), { y: H - fh / 2 - Math.min(0.01, H * 0.08), z: D / 2 - fp / 2 }));
+    controls(H - fh / 2 - Math.min(0.01, H * 0.08), D / 2, W);
+    underside(0.001, W, D - fp, -fp / 2);
+    return g;
+  }
+  const island = st.hood === 'island';
+  const rimH = clamp(H * 0.08, 0.04, 0.06);
+  const canopyH = clamp(H * 0.24, 0.1, 0.22);
+  const cw = clamp(W * 0.42, 0.2, 0.32);
+  const cd = clamp(D * 0.5, 0.18, 0.3);
+  const zTop = island ? 0 : -D / 2 + cd / 2;
+  const canopyMat = st.glass ? m.glass({ tint: '#1f2427', opacity: 0.75 }) : body;
+  // faixa de comandos (aro) e campânula
+  g.add(place(kit.box(W, rimH, D, body, { r: 0.004, seg: 3, part: 'main' }), { y: rimH / 2 }));
+  controls(rimH / 2, D / 2, W);
+  g.add(place(frustum(c, W - 0.004, D - 0.004, cw, cd, canopyH, zTop, canopyMat, { part: 'main' }), { y: rimH + canopyH / 2 }));
+  // chaminé até a altura total (com uma junta, como a peça telescópica)
+  const chH = H - rimH - canopyH;
+  if (chH > 0.01) {
+    g.add(place(kit.box(cw, chH, cd, body, { r: 0.003, part: 'main' }), { y: rimH + canopyH + chH / 2, z: zTop }));
+    if (chH > 0.2) g.add(place(kit.box(cw + 0.002, 0.003, cd + 0.002, m.flat(dark ? '#4b4e52' : '#b9bcc0')), { y: rimH + canopyH + chH * 0.45, z: zTop }));
+  }
+  underside(0.001, W, D);
+  return g;
+}
+
 // Eletroportátil desconhecido: corpo arredondado com painel e botão
 function smallGeneric(c) {
   const { kit, m, W, H, D, place } = c;
@@ -1998,22 +2475,259 @@ function smallGeneric(c) {
   return g;
 }
 
+// Xícara (perfil de revolução) com alça para +X; base em y = 0
+function cup(c, r, h, material, { coffee = true } = {}) {
+  const { kit } = c;
+  const g = kit.group('xicara');
+  g.add(kit.lathe([[0.0001, 0], [r * 0.62, 0], [r * 0.66, h * 0.08], [r * 0.9, h * 0.45], [r, h], [r * 0.93, h], [r * 0.84, h * 0.5], [r * 0.56, h * 0.14], [0.0001, h * 0.14]], material, { seg: 28, part: 'detail' }));
+  if (coffee) g.add(c.place(kit.cylinder(r * 0.9, r * 0.9, 0.002, c.m.flat('#3a2112', { roughness: 0.35 }), { seg: 24 }), { y: h * 0.82 }));
+  g.add(kit.tube([[r * 0.86, h * 0.8, 0], [r * 1.38, h * 0.72, 0], [r * 1.32, h * 0.32, 0], [r * 0.72, h * 0.26, 0]], Math.max(0.0025, r * 0.1), material, { seg: 20, radial: 8, part: 'detail' }));
+  return g;
+}
+
+// Cafeteira expresso (porta-filtro, manômetro e vaporizador) ou de cápsulas (alavanca, bico e reservatório
+// transparente atrás). Torre atrás, cabeça no alto avançando para a frente e bandeja de gotejamento embaixo.
+function espresso(c) {
+  const { kit, m, spec, st, C, W, H, D, place } = c;
+  const capsule = !!st.capsule;
+  const g = kit.group(capsule ? 'cafeteira-capsulas' : 'cafeteira-expresso');
+  const body = smallBody(c);
+  const dark = isDark(kit, C.main);
+  const steel = (spec.material === 'steel' || st.inox) && steelColor(kit, C.main);
+  const chrome = chromeOf(c);
+  const black = m.plastic('#161718', { gloss: 0.5 });
+  const accent = steel ? black : dark ? brushedOf(c, '#b9bcbf') : m.plastic(kit.shade(C.main, -0.35), { gloss: 0.5 });
+  const feet = 0.006;
+  const tankD = capsule ? Math.min(0.085, D * 0.28) : 0;
+  const zBack = -D / 2 + tankD;
+  const towerD = D * (capsule ? 0.32 : 0.5);
+  const zT = zBack + towerD; // frente da torre
+  const headFront = capsule ? D / 2 - 0.006 : D / 2 - Math.min(0.08, D * 0.27);
+  const headH = H * (capsule ? 0.3 : 0.31);
+  const yH0 = H - headH;
+  const trayH = Math.min(0.028, H * 0.1);
+  const trayFront = D / 2 - (capsule ? 0.004 : 0.022);
+  if (capsule) {
+    // torre e cabeça arredondadas (seções superelípticas)
+    const a = W / 2;
+    const bT = (zT - zBack) / 2;
+    g.add(loft(c, [[feet, a * 0.96, bT * 0.96, zBack + bT], [feet + 0.008, a, bT, zBack + bT], [yH0 + 0.02, a, bT, zBack + bT]], body, { n: 3.2, seg: 48, part: 'main' }));
+    const bH = (headFront - zBack) / 2;
+    const zH = zBack + bH;
+    g.add(loft(c, [[yH0, a * 0.9, bH * 0.92, zH], [yH0 + 0.012, a, bH, zH], [H - 0.03, a, bH, zH], [H - 0.014, a * 0.95, bH * 0.95, zH], [H - 0.009, a * 0.84, bH * 0.86, zH]], body, { n: 3.2, seg: 48, part: 'main' }));
+    // alavanca por cima (abre o compartimento da cápsula)
+    g.add(place(kit.box(W * 0.62, 0.011, bH * 1.5, accent, { r: 0.005, part: 'detail' }), { y: H - 0.0055, z: zH + bH * 0.15 }));
+    // reservatório de água transparente atrás, com água
+    const tw = W * 0.84;
+    const th = H * 0.78;
+    g.add(place(kit.box(tw, th, tankD - 0.004, m.glass({ tint: '#cfe3ee', opacity: 0.38 }), { r: 0.012 }), { y: feet + 0.012 + th / 2, z: -D / 2 + (tankD - 0.004) / 2 }));
+    g.add(place(kit.box(tw - 0.01, th * 0.62, tankD - 0.016, m.glass({ tint: '#8fc0de', opacity: 0.32 }), { r: 0.008 }), { y: feet + 0.018 + th * 0.31, z: -D / 2 + (tankD - 0.004) / 2 }));
+    g.add(place(kit.box(tw * 0.9, 0.012, tankD - 0.006, black, { r: 0.004 }), { y: feet + 0.012 + th + 0.004, z: -D / 2 + (tankD - 0.004) / 2 }));
+    // bico de saída e botão
+    g.add(place(kit.cylinder(0.011, 0.013, 0.018, black, { seg: 18 }), { y: yH0 - 0.006, z: headFront - 0.045 }));
+    const bz = headFront - 0.004;
+    g.add(place(kit.cylinder(0.011, 0.011, 0.006, trimOf(c), { seg: 20 }), { y: H - 0.05, z: bz, rx: PI / 2 }));
+    g.add(place(kit.cylinder(0.0125, 0.0125, 0.002, m.flat('#4fb3ff', { emissive: '#3aa0ff' }), { seg: 20 }), { y: H - 0.05, z: bz - 0.002, rx: PI / 2 }));
+  } else {
+    // torre (com o reservatório embutido) e cabeça
+    g.add(place(kit.box(W, yH0 + 0.012 - feet, zT + D / 2, body, { r: 0.012, part: 'main' }), { y: feet + (yH0 + 0.012 - feet) / 2, z: (-D / 2 + zT) / 2 }));
+    g.add(place(kit.box(W, headH, headFront + D / 2, body, { r: 0.012, part: 'main' }), { y: yH0 + headH / 2, z: (-D / 2 + headFront) / 2 }));
+    // aquecedor de xícaras: grade cromada no topo
+    g.add(place(kit.box(W - 0.03, 0.002, headFront + D / 2 - 0.05, chrome, { part: 'metal' }), { y: H - 0.001, z: (-D / 2 + headFront) / 2 - 0.006 }));
+    for (const sx of [-1, 1]) g.add(place(kit.box(0.006, 0.006, headFront + D / 2 - 0.04, chrome, { r: 0.0025, part: 'metal' }), { x: sx * (W / 2 - 0.012), y: H - 0.003, z: (-D / 2 + headFront) / 2 - 0.006 }));
+    // grupo, porta-filtro (cabo preto até a frente) e bicos
+    const zg = headFront - 0.04;
+    const gr = Math.min(0.034, W * 0.15);
+    g.add(place(kit.cylinder(gr, gr, 0.012, chrome, { seg: 28, part: 'metal' }), { y: yH0 - 0.006, z: zg }));
+    const pfH = 0.024;
+    const pfY = yH0 - 0.012 - pfH / 2;
+    g.add(place(kit.lathe([[0.0001, -pfH / 2], [gr * 0.82, -pfH / 2], [gr * 1.02, pfH / 2], [0.0001, pfH / 2]], chrome, { seg: 28, part: 'metal' }), { y: pfY, z: zg }));
+    const hr = 0.0105;
+    const tipZ = D / 2 - hr - 0.0005;
+    g.add(kit.tube([[0, pfY, zg + gr * 0.8], [0, pfY - 0.003, zg + gr + 0.02], [0, pfY - 0.012, tipZ]], hr, black, { seg: 16, radial: 10, part: 'detail' }));
+    g.add(place(kit.sphere(hr, black, { seg: 14 }), { y: pfY - 0.012, z: tipZ }));
+    for (const sx of [-1, 1]) g.add(place(kit.cylinder(0.003, 0.004, 0.012, chrome, { seg: 10 }), { x: sx * 0.008, y: pfY - pfH / 2 - 0.006, z: zg }));
+    // manômetro e botões na frente da cabeça
+    const yc = yH0 + headH * 0.55;
+    const gR = Math.min(0.022, headH * 0.26);
+    g.add(place(disc(c, [[0.0001, 0], [gR, 0], [gR, 0.005], [gR * 0.86, 0.006], [0.0001, 0.006]], chrome, { seg: 28, part: 'metal' }), { y: yc, z: headFront }));
+    g.add(place(disc(c, [[0.0001, 0.0062], [gR * 0.84, 0.0062]], m.flat('#f4f4f2', { roughness: 0.4 }), { seg: 28 }), { y: yc, z: headFront }));
+    g.add(place(kit.box(gR * 0.75, 0.0015, 0.001, m.flat('#c62828')), { x: gR * 0.25, y: yc + gR * 0.15, z: headFront + 0.0068, rz: 0.6 }));
+    for (const sx of [-1, 1]) {
+      g.add(place(kit.cylinder(0.008, 0.008, 0.006, accent, { seg: 18 }), { x: sx * W * 0.3, y: yc, z: headFront + 0.002, rx: PI / 2 }));
+      g.add(place(kit.box(0.004, 0.002, 0.001, m.flat('#4fe3a1', { emissive: '#3fd18f' })), { x: sx * W * 0.3, y: yc + 0.014, z: headFront + 0.0005 }));
+    }
+    // vaporizador: botão no topo direito e bico cromado descendo pela lateral
+    const wx = W / 2 - 0.022;
+    g.add(place(knob(c, 0.011, 0.012, { material: accent, ring: false }), { x: wx, y: yH0 + headH * 0.82, z: headFront }));
+    g.add(kit.tube([[wx, yH0 + 0.004, headFront - 0.012], [wx + 0.006, yH0 - 0.03, headFront - 0.004], [wx + 0.004, trayH + 0.05, headFront + 0.004]], 0.0045, chrome, { seg: 16, radial: 8, part: 'metal' }));
+  }
+  // bandeja de gotejamento com grade e xícara
+  const tz0 = zT - 0.01;
+  const tD = trayFront - tz0;
+  g.add(place(kit.box(W - 0.012, trayH, tD, steel ? chrome : black, { r: 0.006, part: 'detail' }), { y: feet + trayH / 2, z: tz0 + tD / 2 }));
+  const slats = Math.max(4, Math.floor((tD - 0.02) / 0.009));
+  for (let i = 0; i < slats; i++) g.add(place(kit.box(W - 0.04, 0.002, 0.004, chrome, { part: 'metal' }), { y: feet + trayH + 0.0005, z: tz0 + 0.012 + (i * (tD - 0.024)) / Math.max(1, slats - 1) }));
+  const cupH = Math.min(0.06, (yH0 - 0.04) - (feet + trayH) - 0.02);
+  if (cupH > 0.03) {
+    const cupZ = capsule ? headFront - 0.045 : headFront - 0.04;
+    g.add(place(cup(c, Math.min(0.03, cupH * 0.55), cupH, capsule ? m.glass({ tint: '#e8eef0', opacity: 0.4 }) : m.plastic('#f4f2ee', { gloss: 0.85 })), { y: feet + trayH + 0.001, z: cupZ }));
+  }
+  feet4(c, g, W, D - 0.01, feet, { r: 0.008, inset: 0.025 });
+  return g;
+}
+
+// Cafeteira italiana (moka): duas câmaras octogonais unidas na cintura, tampa, cabo preto (+X) e bico (−X)
+function moka(c) {
+  const { kit, m, spec, st, C, W, H, D, place } = c;
+  const g = kit.group('cafeteira-italiana');
+  const colored = !isDark(kit, C.main) && !steelColor(kit, C.main) && spec.material !== 'steel' && !st.inox;
+  const metalM = colored ? m.paint(C.main, { gloss: 0.8 }) : m.metal(steelColor(kit, C.main) ? C.main : '#c9cbcd', { finish: 'brushed' });
+  const R = Math.min(D / 2, (W - 0.05) / 2) / Math.cos(PI / 8); // raio no vértice; entre faces dá D/2
+  const spout = Math.min(0.016, W * 0.1);
+  const x0 = -W / 2 + spout + R * 0.86 * Math.cos(PI / 8);
+  const yW = H * 0.44;
+  const oct = (pts, mat, part = 'main') => g.add(place(smooth(kit.lathe(pts, mat, { seg: 8, part })), { x: x0, ry: PI / 8 }));
+  // câmara de baixo (água), cinta e câmara de cima (café)
+  oct([[0.0001, 0], [R * 0.97, 0], [R, 0.004], [R * 0.66, yW]], metalM);
+  oct([[R * 0.66, yW], [R * 0.7, yW + 0.002], [R * 0.7, yW + H * 0.04], [R * 0.66, yW + H * 0.045]], metalM, 'metal');
+  oct([[R * 0.64, yW + H * 0.045], [R * 0.86, H * 0.9], [R * 0.84, H * 0.905]], metalM);
+  // tampa abaulada com pegador preto
+  oct([[R * 0.85, H * 0.902], [R * 0.78, H * 0.94], [R * 0.3, H * 0.965], [0.0001, H * 0.965]], metalM);
+  g.add(place(kit.cylinder(0.008, 0.011, H * 0.035, m.plastic('#151617', { gloss: 0.4 }), { seg: 12 }), { x: x0, y: H - H * 0.0175 }));
+  // cabo de baquelite
+  const hr = Math.min(0.01, W * 0.06);
+  const hx = W / 2 - hr - 0.0005;
+  g.add(kit.tube([[x0 + R * 0.78, H * 0.84, 0], [hx, H * 0.83, 0], [hx, H * 0.6, 0], [x0 + R * 0.72, H * 0.54, 0]], hr, m.plastic('#151617', { gloss: 0.4 }), { seg: 32, radial: 10, smooth: false, part: 'detail' }));
+  // bico
+  const sp = kit.cylinder(0.003, 0.011, spout * 2.2, metalM, { seg: 10, part: 'main' });
+  sp.rotation.z = PI / 2.4;
+  sp.position.set(-W / 2 + spout * 1.05, H * 0.86, 0);
+  g.add(sp);
+  // válvula de segurança na câmara de baixo
+  g.add(place(kit.cylinder(0.005, 0.006, 0.006, m.metal('#d8b46a', { finish: 'chrome' }), { seg: 10 }), { x: x0, y: yW * 0.55, z: R * 0.78, rx: PI / 2 }));
+  return g;
+}
+
+// Mixer de mão: campânula de inox no chão, haste, anel e corpo do motor com pegada e botões na frente
+function stickMixer(c) {
+  const { kit, m, C, W, H, D, place } = c;
+  const g = kit.group('mixer');
+  const body = smallBody(c);
+  const R = Math.min(W, D) / 2;
+  const steel = m.metal('#d0d3d6', { finish: 'brushed' });
+  const yS = H * 0.43;
+  // campânula (aberta embaixo) com a lâmina dentro
+  g.add(kit.lathe([[R * 0.93, 0], [R, 0.003], [R * 0.98, H * 0.055], [R * 0.6, H * 0.095], [R * 0.34, H * 0.12], [R * 0.3, H * 0.125]], steel, { seg: 36, part: 'metal' }));
+  g.add(place(kit.box(R * 1.4, 0.0015, R * 0.3, steel), { y: H * 0.03, ry: 0.5 }));
+  for (let i = 0; i < 4; i++) g.add(place(kit.box(R * 0.32, H * 0.022, 0.002, m.flat('#202224')), { y: H * 0.055, z: 0, ry: (i * PI) / 2, rx: 0 }).translateZ(R * 0.97));
+  // haste
+  g.add(place(kit.cylinder(R * 0.28, R * 0.3, yS - H * 0.12 + 0.004, steel, { seg: 20, part: 'metal' }), { y: (H * 0.12 + yS) / 2 }));
+  // anel de encaixe
+  const ringM = m.plastic(isDark(kit, C.main) ? '#3a3c40' : kit.shade(C.main, -0.12), { gloss: 0.5 });
+  g.add(kit.lathe([[R * 0.3, yS - 0.002], [R * 0.5, yS], [R * 0.6, yS + H * 0.035], [R * 0.6, yS + H * 0.045], [0.0001, yS + H * 0.045]], ringM, { seg: 32, part: 'detail' }));
+  // corpo do motor
+  const y1 = yS + H * 0.045;
+  g.add(kit.lathe([[0.0001, y1], [R * 0.66, y1], [R * 0.8, y1 + H * 0.06], [R * 0.86, H * 0.68], [R * 0.84, H * 0.86], [R * 0.72, H - 0.012], [R * 0.4, H - 0.002], [0.0001, H]], body, { seg: 40, part: 'main' }));
+  // pegada emborrachada e botões (frente)
+  g.add(kit.lathe([[R * 0.86, H * 0.6], [R * 0.9, H * 0.61], [R * 0.9, H * 0.76], [R * 0.86, H * 0.77]], m.rubber(isDark(kit, C.main) ? '#2a2b2d' : '#5a5d61'), { seg: 40, part: 'detail' }));
+  for (const [y, col] of [[H * 0.86, '#d9dadb'], [H * 0.81, '#d9dadb']]) g.add(place(kit.box(R * 0.42, H * 0.03, 0.006, m.plastic(isDark(kit, C.main) ? '#9a9da1' : col, { gloss: 0.6 }), { r: 0.0025 }), { y, z: R * 0.82 }));
+  return g;
+}
+
+// Bebedouro de garrafão (de coluna ou de mesa): gabinete, torneiras na frente e garrafão azul invertido em cima
+function bottleDispenser(c) {
+  const { kit, m, C, W, H, D, place } = c;
+  const g = kit.group('bebedouro');
+  const body = smallBody(c);
+  const dark = isDark(kit, C.main);
+  const tapP = 0.026; // as torneiras avançam além do gabinete
+  const bodyD = D - tapP;
+  const zc = -D / 2 + bodyD / 2;
+  const zF = -D / 2 + bodyD;
+  const br = Math.min(0.135, W / 2 - 0.006, bodyD / 2 - 0.006);
+  const bh = Math.min(0.49, H * 0.42);
+  const hb = H - bh;
+  const r = Math.min(0.035, W * 0.11);
+  g.add(place(kit.box(W, hb, bodyD, body, { r, seg: 4, part: 'main' }), { y: hb / 2, z: zc }));
+  // colarinho e garrafão invertido (o gargalo entra no gabinete)
+  g.add(place(kit.cylinder(0.07, 0.078, 0.02, m.plastic(dark ? '#2a2b2d' : '#e9eaec', { gloss: 0.5 }), { seg: 32, part: 'detail' }), { y: hb + 0.008, z: zc }));
+  const yb = hb + 0.016;
+  const ym = yb + (H - yb) * 0.6;
+  g.add(place(kit.lathe([[0.0001, yb], [0.028, yb], [0.028, yb + 0.05], [br * 0.5, yb + 0.07], [br * 0.88, yb + 0.105], [br, yb + 0.145], [br, ym - 0.014], [br * 0.965, ym], [br, ym + 0.014], [br, H - 0.035], [br * 0.92, H - 0.009], [br * 0.6, H - 0.001], [0.0001, H]], m.glass({ tint: '#4d9be0', opacity: 0.5 }), { seg: 48, part: 'detail' }), { z: zc }));
+  // painel das torneiras (fria azul / natural / quente vermelha) e bandeja
+  const tapY = hb - Math.min(0.12, hb * 0.24);
+  g.add(place(kit.box(W * 0.7, Math.min(0.14, hb * 0.26), 0.006, m.plastic(dark ? '#3a3c40' : '#2b2d30', { gloss: 0.4 }), { r: 0.01 }), { y: tapY, z: zF - 0.002 }));
+  for (const [sx, col] of [[-1, '#2f7fd8'], [1, '#d83a2f']]) {
+    const tx = sx * W * 0.17;
+    g.add(place(kit.box(0.026, 0.034, tapP, m.plastic(col, { gloss: 0.6 }), { r: 0.006, part: 'detail' }), { x: tx, y: tapY + 0.012, z: zF + tapP / 2 - 0.001 }));
+    g.add(place(kit.box(0.02, 0.008, 0.016, m.plastic(col, { gloss: 0.6 }), { r: 0.003 }), { x: tx, y: tapY + 0.033, z: zF + tapP - 0.009, rx: -0.4 }));
+    g.add(place(kit.cylinder(0.005, 0.005, 0.01, m.plastic('#e8e8e8', { gloss: 0.5 }), { seg: 10 }), { x: tx, y: tapY - 0.008, z: zF + tapP * 0.55 }));
+  }
+  const trayY = Math.max(0.03, tapY - Math.min(0.24, hb * 0.45));
+  g.add(place(kit.box(W * 0.62, 0.016, tapP + 0.03, m.plastic('#2b2d30', { gloss: 0.4 }), { r: 0.005, part: 'detail' }), { y: trayY, z: zF + tapP / 2 - 0.015 }));
+  for (let i = 0; i < 5; i++) g.add(place(kit.box(W * 0.58, 0.002, 0.003, m.flat('#0c0d0e')), { y: trayY + 0.0085, z: zF - 0.008 + i * 0.008 }));
+  // coluna: porta do compartimento de baixo (frisos) e grade de ventilação
+  if (hb > 0.6) {
+    const dy0 = 0.06;
+    const dy1 = trayY - 0.05;
+    g.add(place(kit.box(W - 0.06, 0.002, 0.001, m.flat(dark ? '#0d0d0d' : '#b9bcbf')), { y: dy1, z: zF + 0.0004 }));
+    g.add(place(kit.box(W - 0.06, 0.002, 0.001, m.flat(dark ? '#0d0d0d' : '#b9bcbf')), { y: dy0, z: zF + 0.0004 }));
+    g.add(place(kit.box(0.012, 0.05, 0.006, m.plastic('#2b2d30', { gloss: 0.3 }), { r: 0.003 }), { x: W / 2 - 0.05, y: (dy0 + dy1) / 2, z: zF + 0.002 }));
+  }
+  return g;
+}
+
+// Espremedor de frutas: base do motor, copo coletor com bico, peneira, cone e tampa transparente.
+// Seções elípticas (meia largura A, meia profundidade B): o bico completa a frente até D/2.
+function juicer(c) {
+  const { kit, m, W, H, D, place } = c;
+  const g = kit.group('espremedor');
+  const body = smallBody(c);
+  const A = W / 2;
+  const B = Math.min(A, D / 2 - 0.016);
+  const zc = -D / 2 + B; // costas em -D/2; o bico ocupa o resto da frente
+  const ring = (y, k) => [y, A * k, B * k, zc];
+  const yb = H * 0.38;
+  g.add(loft(c, [ring(0, 0.94), ring(0.01, 1), ring(yb * 0.55, 0.99), ring(yb, 0.92)], body, { n: 2, seg: 48, part: 'main' }));
+  // copo coletor translúcido com suco e bico na frente
+  const yC = yb + (H - yb) * 0.34;
+  const glassM = m.glass({ tint: '#e9edef', opacity: 0.35 });
+  g.add(loft(c, [ring(yb, 0.88), ring(yb + 0.01, 0.97), ring(yC, 1), ring(yC + 0.003, 0.97)], glassM, { n: 2, seg: 48, capTop: false, capBottom: false, part: 'detail' }));
+  const jh = Math.min(0.02, (yC - yb) * 0.4);
+  g.add(loft(c, [ring(yb + 0.002, 0.86), ring(yb + 0.002 + jh, 0.9)], m.plastic('#f2a33a', { gloss: 0.7 }), { n: 2, seg: 40 }));
+  const z0 = zc + B * 0.9;
+  const sl = D / 2 - z0;
+  g.add(place(kit.box(0.03, 0.012, sl, glassM, { r: 0.004 }), { y: yb + 0.016, z: z0 + sl / 2 }));
+  // peneira e cone (gomos facetados)
+  g.add(loft(c, [ring(yC, 0.98), ring(yC + 0.006, 0.98)], m.plastic('#f4f4f2', { gloss: 0.5 }), { n: 2, seg: 40, part: 'detail' }));
+  const rc = Math.min(A, B) * 0.5;
+  const coneH = Math.min(0.07, (H - yC) * 0.55);
+  g.add(place(smooth(kit.lathe([[rc, yC + 0.005], [rc * 0.88, yC + coneH * 0.25], [rc * 0.48, yC + coneH * 0.75], [0.0001, yC + coneH]], m.plastic('#f4f4f2', { gloss: 0.5 }), { seg: 14, part: 'detail' })), { z: zc }));
+  // tampa transparente
+  g.add(loft(c, [ring(yC + 0.004, 0.99), ring(yC + 0.02, 1), ring(lerp(yC, H, 0.6), 0.96), ring(H - 0.012, 0.62), ring(H - 0.002, 0.16), ring(H, 0.03)], m.glass({ tint: '#dfe6e8', opacity: 0.22 }), { n: 2, seg: 48, capBottom: false, part: 'detail' }));
+  // botão na frente da base
+  g.add(place(kit.box(0.03, 0.012, 0.008, trimOf(c), { r: 0.003 }), { y: yb * 0.45, z: zc + B * 0.97 }));
+  return g;
+}
+
 const SMALL = {
-  coffee_maker: coffeeMaker,
-  blender: (c) => blender(c),
+  coffee_maker: (c) => (c.st.moka ? moka(c) : c.st.espresso ? espresso(c) : coffeeMaker(c)),
+  blender: (c) => (c.st.stick ? stickMixer(c) : blender(c)),
   food_processor: (c) => blender(c, { wide: true }),
-  juicer: (c) => blender(c, { wide: true, short: true }),
+  juicer,
   air_fryer: airFryer,
   kettle,
   toaster,
   mixer,
   fan,
+  range_hood: rangeHood,
   microwave: (c) => microwaveModel(c.spec, c.kit, c.THREE),
   rice_cooker: (c) => pot(c, 'rice_cooker'),
   pressure_cooker: (c) => pot(c, 'pressure_cooker'),
   popcorn: (c) => pot(c, 'popcorn'),
   sandwich_maker: sandwichMaker,
-  water_purifier: waterPurifier,
+  water_purifier: (c) => (c.st.bottle ? bottleDispenser(c) : waterPurifier(c)),
   heater,
   speaker,
   iron,

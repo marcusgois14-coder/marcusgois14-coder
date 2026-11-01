@@ -1,7 +1,7 @@
 // Loja virtual da rede Atual Móveis: escolhe a loja, carrega o catálogo dela e cuida das rotas.
 import { $, $$, esc, icon, rpc, toast, storage, waLink, mapsLink, bizMessage, fmtPhone } from './lib.js';
 import { S, on, emit, setStorefront, storesForLocation, storeWhatsapp, storeAddress } from './state.js';
-import { initLayers, closeDrawer, closeSheet, sheet } from './layers.js';
+import { initLayers, closeDrawer, closeSheet, sheet, drawer } from './layers.js';
 import { initPicker, openPicker, updateStoreUI } from './picker.js';
 import {
   renderHome,
@@ -20,6 +20,7 @@ import {
 } from './catalog.js';
 import { initCart, loadCart, renderCart, openTrack } from './cart.js';
 import { initMotion } from './motion.js';
+import { stateArt } from './art.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const header = $('[data-header]');
@@ -307,7 +308,8 @@ function enterRoom(params) {
           else navigate(storePath());
         },
       });
-      $('#room3d-title', roomEl)?.focus({ preventScroll: true });
+      // foco no título, menos quando um produto/carrinho já abriu por cima (ex.: recarregar em ?ambiente=1&produto=…)
+      if (!sheet.el && !drawer.el) $('#room3d-title', roomEl)?.focus({ preventScroll: true });
     })
     .catch((err) => {
       if (job !== roomJob) return;
@@ -384,7 +386,8 @@ function route({ keepScroll = false, fromPop = false } = {}) {
     if (!isProductOpen(prod)) openProduct(prod, { push: false });
   } else closeProductLayers();
 
-  const m = /^\/pedido\/([0-9a-f-]{36})\/?$/i.exec(location.pathname);
+  // qualquer /pedido/<algo> abre o acompanhamento (link inválido mostra o aviso lá dentro)
+  const m = /^\/pedido\/([^/?#]+)\/?$/i.exec(location.pathname);
   if (m && trackOpenedFor !== m[1]) {
     trackOpenedFor = m[1];
     openTrack({ token: m[1] });
@@ -505,7 +508,7 @@ function pickInitialStore() {
 function showBootError(err) {
   const box = $('[data-boot-error]');
   box.hidden = false;
-  box.innerHTML = `<div><strong>Não foi possível carregar a loja.</strong><p>${esc(bizMessage(err))}</p><button class="btn btn--primary" type="button" data-retry>Tentar de novo</button></div>`;
+  box.innerHTML = `<div>${stateArt('error', { cls: 'boot-error__art' })}<strong>Não foi possível carregar a loja.</strong><p>${esc(bizMessage(err))}</p><button class="btn btn--primary" type="button" data-retry>Tentar de novo</button></div>`;
   $('[data-retry]', box).addEventListener('click', () => location.reload());
 }
 

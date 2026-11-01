@@ -83,7 +83,7 @@
   position: fixed;
   z-index: 600;
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: 12px;
   background: var(--img-bg, #f2f2f2);
   box-shadow: 0 0 0 2px #fff, 0 14px 30px -10px rgba(40, 18, 6, 0.45);
   pointer-events: none;
@@ -175,6 +175,23 @@
   transition: opacity 0.4s var(--m-ease-soft);
 }
 
+/* Camada saindo não segura toques: durante a animação de fechar, o toque passa para a página
+   (antes, tocar num produto logo depois de fechar o carrinho caía na sobreposição que ainda sumia). */
+.motion-ok .drawer:not(.is-open),
+.motion-ok .sheet:not(.is-open),
+.motion-ok .menu-drawer:not(.is-open),
+.motion-ok .overlay:not(.is-visible),
+.motion-ok .sheet-overlay:not(.is-visible),
+.motion-ok .menu-overlay:not(.is-visible) {
+  pointer-events: none;
+}
+
+/* troca de camada: uma sobreposição some e a outra aparece no mesmo quadro (o JS põe e tira a classe) */
+.motion-ok .overlay.m-instant,
+.motion-ok .sheet-overlay.m-instant {
+  transition: none;
+}
+
 @media (hover: hover) and (pointer: fine) {
   @supports ((-webkit-backdrop-filter: blur(2px)) or (backdrop-filter: blur(2px))) {
     .motion-ok .overlay,
@@ -223,6 +240,31 @@
   .motion-ok .sheet.is-open {
     transform: none;
     transition: transform 0.5s var(--m-ease-out), opacity 0.1s linear, visibility 0s;
+  }
+}
+
+/* Troca de camada (ex.: produto -> carrinho): a que sai some no lugar, rápido, sem cruzar com a que entra.
+   (o JS põe .m-handoff só quando outra camada abre no mesmo instante e tira depois de ~300 ms) */
+.motion-ok .drawer.m-handoff:not(.is-open) {
+  transform: none;
+  opacity: 0;
+  transition: opacity 0.18s ease-out, visibility 0s linear 0.18s;
+}
+
+.motion-ok .sheet.m-handoff:not(.is-open) {
+  opacity: 0;
+  transition: opacity 0.18s ease-out, transform 0.2s var(--m-ease-out), visibility 0s linear 0.2s;
+}
+
+@media (min-width: 750px) {
+  .motion-ok .sheet.m-handoff:not(.is-open) {
+    transform: translate(-50%, -50%) scale(0.98);
+  }
+}
+
+@media (max-width: 749px) {
+  .motion-ok .sheet.m-handoff:not(.is-open) {
+    transform: scale(0.985);
   }
 }
 
@@ -356,12 +398,24 @@
 }
 
 /* ---------- Aviso (toast): sobe com mola e o ✓ entra girando ---------- */
+/* Largura pelo conteúdo: com left: 50% a largura "encolhe para caber" em metade da tela (195 px num celular)
+   e "Adicionado aos favoritos" quebrava em duas linhas; o max-width de style.css continua valendo. */
+.toast {
+  width: max-content;
+}
+
+.toast[data-m-tone='ok'] {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
 .toast[data-m-tone='ok']::before {
   content: '';
-  display: inline-block;
+  flex: none;
   width: 18px;
   height: 18px;
-  margin: -2px 9px 0 -6px;
+  margin: 0 0 0 -6px;
   border-radius: 50%;
   background: #2fbf71 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6.5 12.5 3.8 3.8 7.4-7.6' fill='none' stroke='%23fff' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
   vertical-align: middle;

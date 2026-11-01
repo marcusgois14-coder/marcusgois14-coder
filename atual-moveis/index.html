@@ -27,6 +27,7 @@
   <link rel="stylesheet" href="/assets/css/viewer3d.css">
   <link rel="stylesheet" href="/assets/css/room3d.css">
   <link rel="stylesheet" href="/assets/css/motion.css">
+  <link rel="stylesheet" href="/assets/css/art.css">
   <script type="importmap">{"imports":{"three":"/assets/vendor/three/three.module.min.js","three/addons/":"/assets/vendor/three/addons/"}}</script>
 </head>
 <body>
@@ -130,7 +131,7 @@
     <!-- Página inicial (montada a partir do banco) -->
     <div data-home>
       <section class="hero" aria-roledescription="carrossel" aria-label="Destaques" data-hero>
-        <div class="hero__slides" data-hero-slides></div>
+        <div class="hero__slides" data-hero-slides><div class="hero__boot" role="status"><img src="/assets/img/art/loading.svg" alt="" width="160" height="160" decoding="async"><span>Carregando a loja…</span></div></div>
         <button class="hero__arrow hero__arrow--prev" type="button" aria-label="Slide anterior" data-hero-prev><svg aria-hidden="true"><use href="#i-slide-prev"/></svg></button>
         <button class="hero__arrow hero__arrow--next" type="button" aria-label="Próximo slide" data-hero-next><svg aria-hidden="true"><use href="#i-slide-next"/></svg></button>
         <div class="hero__dots" data-hero-dots></div>
@@ -158,7 +159,10 @@
     <div class="footer__main">
       <div class="footer__top">
         <div class="footer__brand">
-          <p class="footer__slogan" data-slogan>Sua casa,<br>sempre atual.</p>
+          <div class="footer__sign">
+            <img class="footer__mascot" src="/assets/img/art/mascote.svg" alt="" width="312" height="312" loading="lazy" decoding="async" draggable="false">
+            <p class="footer__slogan" data-slogan>Sua casa,<br>sempre atual.</p>
+          </div>
           <form class="newsletter" action="#" novalidate data-newsletter>
             <label class="newsletter__label" for="news-email">Receba novidades</label>
             <div class="newsletter__field">

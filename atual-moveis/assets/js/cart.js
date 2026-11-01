@@ -5,6 +5,7 @@ import { S, on, emit, pixPct, hasPix, displayPrice, installments, deliveryStatus
 import { openDrawer, openSheet, closeSheet } from './layers.js';
 import { resolveCep, resolveGps, updateStoreUI } from './picker.js';
 import { productUrl, refreshWishButtons } from './catalog.js';
+import { stateArt, loaderHTML } from './art.js';
 
 const MAX_QTY = 20;
 const clampQty = (n) => Math.max(1, Math.min(MAX_QTY, Math.round(Number(n) || 1)));
@@ -66,7 +67,8 @@ export function addToCart({ id, variant = null, qty = 1, open = true, checkout =
     else if (open) openDrawer('cart-drawer');
     else toast('Adicionado ao carrinho');
   };
-  if (ev.delay > 0) setTimeout(next, ev.delay);
+  // se durante a espera a pessoa abriu outra coisa (um produto, a busca...), não a interrompe: só avisa
+  if (ev.delay > 0) setTimeout(() => (document.querySelector('.sheet.is-open, .menu-drawer.is-open, .drawer.is-open:not(#cart-drawer)') ? toast('Adicionado ao carrinho') : next()), ev.delay);
   else next();
 }
 
@@ -138,7 +140,7 @@ function lineHTML(l, i) {
 }
 
 function closedNotice() {
-  return `<div class="notice notice--warn">${icon('i-store')}<div>${esc(S.store.closed_message || 'Esta loja não está recebendo pedidos pelo site agora.')} <a class="link" href="${esc(
+  return `<div class="notice notice--warn notice--art">${stateArt('store-closed', { size: 'xs', cls: 'notice__art' })}<div>${esc(S.store.closed_message || 'Esta loja não está recebendo pedidos pelo site agora.')} <a class="link" href="${esc(
     waLink(storeWhatsapp(), `Olá! Quero fazer um pedido na ${S.store.name}.`)
   )}" target="_blank" rel="noopener">Fale pelo WhatsApp</a>.</div></div>`;
 }
@@ -155,7 +157,7 @@ export function renderCart() {
     </div>`;
   if (!S.cart.length) {
     el.innerHTML = `${head}<div class="cart__body"><div class="cart-empty">
-        <span class="cart-empty__icon">${icon('i-cart')}</span>
+        ${stateArt('empty-cart', { cls: 'cart-empty__art' })}
         <p class="cart-empty__title">O carrinho está vazio</p>
         <button class="btn-checkout" type="button" data-close>CONTINUAR COMPRANDO ${icon('i-arrow')}</button>
       </div></div>`;
@@ -239,7 +241,7 @@ export function renderWishlist() {
             )
             .join('')
         : `<div class="cart-empty">
-            <span class="cart-empty__icon">${icon('i-heart')}</span>
+            ${stateArt('empty-wish', { cls: 'cart-empty__art' })}
             <p class="cart-empty__title">Sua lista de favoritos está vazia</p>
             <button class="btn-checkout" type="button" data-close>Continuar comprando ${icon('i-arrow')}</button>
           </div>`
@@ -336,7 +338,7 @@ function deliveryNotice() {
   const q = co.quote;
   if (!q) return '';
   if (!q.within_radius) {
-    return `<div class="notice notice--error" role="alert">${icon('i-pin')}<div>Este endereço fica a <strong>${km(q.distance_km)}</strong> da ${esc(S.store.name)}, fora do raio de entrega de ${km(q.radius_km)}.<br><button class="link" type="button" data-open-picker>Ver a loja que atende este endereço</button></div></div>`;
+    return `<div class="notice notice--error notice--art" role="alert">${stateArt('out-of-range', { size: 'xs', cls: 'notice__art' })}<div>Este endereço fica a <strong>${km(q.distance_km)}</strong> da ${esc(S.store.name)}, fora do raio de entrega de ${km(q.radius_km)}.<br><button class="link" type="button" data-open-picker>Ver a loja que atende este endereço</button></div></div>`;
   }
   return `<div class="notice notice--ok">${icon('i-check')}<div>Entregamos neste endereço · ${km(q.distance_km)} da loja · <strong>${Number(q.fee) === 0 ? 'frete grátis' : `frete ${brl(q.fee)}`}</strong>${
     co.addr.precision === 'city' ? '<br><small>Localizamos só a cidade deste CEP; a distância é aproximada e a loja confirma na entrega.</small>' : ''
@@ -429,7 +431,7 @@ function successHTML() {
   const trackUrl = `${location.origin}/pedido/${r.tracking_token}`;
   const msg = `Olá, ${st.name}! Acabei de fazer o pedido ${r.code} pelo site.\nTotal: ${brl(r.total)} (${PAY_LABEL(r.payment_method)}${r.installments > 1 ? ` em ${r.installments}x` : ''}).\nAcompanhar: ${trackUrl}`;
   return `<div class="success">
-    <span class="success__icon">${icon('i-check')}</span>
+    <span class="success__icon success__icon--art">${stateArt('order-success')}</span>
     <h3>Pedido recebido!</h3>
     <span class="success__code">${esc(r.code)}</span>
     <p class="muted">A ${esc(st.name)} vai confirmar o pedido e combinar a entrega pelo WhatsApp${st.lead_time ? `. ${esc(st.lead_time)}` : ''}.</p>
@@ -599,7 +601,7 @@ async function lookupCep(form) {
   const cep = digits($('#co-cep', form).value);
   if (cep.length !== 8) return;
   const box = $('[data-co-delivery]', form);
-  box.innerHTML = '<span class="spinner"></span> <span class="small muted">Buscando endereço…</span>';
+  box.innerHTML = loaderHTML('Buscando endereço…', { size: 'sm' });
   try {
     const r = await resolveCep(cep, $('#co-number', form).value.trim());
     const set = (id, val) => {
@@ -843,7 +845,7 @@ function initCheckout() {
     if (e.target.closest('[data-co-gps]')) {
       const form = e.target.closest('form');
       const box = $('[data-co-delivery]', form);
-      box.innerHTML = '<span class="spinner"></span> <span class="small muted">Obtendo localização…</span>';
+      box.innerHTML = loaderHTML('Obtendo localização…', { size: 'sm' });
       try {
         const g = await resolveGps();
         readStep1(form);
@@ -942,13 +944,19 @@ function renderTrack() {
       ${
         o
           ? `${trackResultHTML(o)}<button class="link" type="button" style="margin-top:14px" data-track-other>Consultar outro pedido</button>`
-          : `<form data-track-form novalidate>
-              <p class="picker__intro">Informe o código do pedido (ex.: AT1024) e o telefone usado na compra.</p>
+          : trackState.busy && trackState.token
+            ? loaderHTML('Buscando seu pedido…')
+            : `<form data-track-form novalidate>
+              ${
+                trackState.miss
+                  ? `<div class="track-miss" role="alert">${stateArt('error', { size: 'sm' })}${trackState.error}</div>`
+                  : '<p class="picker__intro">Informe o código do pedido (ex.: AT1024) e o telefone usado na compra.</p>'
+              }
               <div class="f-grid">
-                <div class="f-field s3"><label class="f-label" for="tr-code">Código do pedido</label><input class="f-input" id="tr-code" name="code" placeholder="AT1024" autocomplete="off" required style="text-transform:uppercase"></div>
-                <div class="f-field s3"><label class="f-label" for="tr-phone">Telefone</label><input class="f-input" id="tr-phone" name="phone" type="tel" inputmode="tel" placeholder="(31) 99999-9999" value="${esc(fmtPhone(storage.get('atual:customer', {}).phone || ''))}" required></div>
+                <div class="f-field s3"><label class="f-label" for="tr-code">Código do pedido</label><input class="f-input" id="tr-code" name="code" placeholder="AT1024" autocomplete="off" required style="text-transform:uppercase" value="${esc(trackState.code || '')}"></div>
+                <div class="f-field s3"><label class="f-label" for="tr-phone">Telefone</label><input class="f-input" id="tr-phone" name="phone" type="tel" inputmode="tel" placeholder="(31) 99999-9999" value="${esc(fmtPhone(trackState.phone || storage.get('atual:customer', {}).phone || ''))}" required></div>
               </div>
-              <div role="alert" style="margin-top:12px">${trackState.error}</div>
+              <div role="alert" style="margin-top:12px">${trackState.miss ? '' : trackState.error}</div>
               <button class="btn btn--primary btn--block" style="margin-top:14px" type="submit" ${trackState.busy ? 'disabled' : ''}>${trackState.busy ? '<span class="spinner"></span> Buscando…' : 'Consultar'}</button>
             </form>
             ${
@@ -963,7 +971,12 @@ function renderTrack() {
 }
 
 export async function openTrack({ token = null } = {}) {
-  trackState = { order: null, error: '', busy: !!token };
+  // link /pedido/<token> que não tem cara de token: nem consulta o banco
+  const bad = !!token && !/^[0-9a-f-]{36}$/i.test(token);
+  trackState = bad
+    ? { order: null, busy: false, miss: true, error: '<p class="notice notice--error">Este link de acompanhamento não é válido. Consulte pelo código do pedido e o telefone.</p>' }
+    : { order: null, error: '', busy: !!token, token };
+  if (bad) token = null;
   renderTrack();
   openSheet('track-sheet', {
     onClose: () => {
@@ -975,9 +988,11 @@ export async function openTrack({ token = null } = {}) {
 
 async function loadTrack(fetcher, token) {
   trackState.busy = true;
+  trackState.token = token || null; // pelo link: Tetim pulando no lugar do formulário
   renderTrack();
   try {
     const o = await fetcher();
+    trackState.miss = !o;
     if (!o) trackState.error = '<p class="notice notice--error">Pedido não encontrado. Confira o código e o telefone.</p>';
     else {
       trackState.order = o;
@@ -985,6 +1000,7 @@ async function loadTrack(fetcher, token) {
       if (token && !location.pathname.startsWith('/pedido/')) history.pushState({ pedido: token }, '', `/pedido/${token}`);
     }
   } catch (err) {
+    trackState.miss = true;
     trackState.error = `<p class="notice notice--error">${esc(err?.code === 'NETWORK' ? bizMessage(err) : 'Pedido não encontrado. Confira o código e o telefone.')}</p>`;
   }
   trackState.busy = false;
@@ -1005,7 +1021,9 @@ function initTrack() {
     const f = e.target;
     const code = f.code.value.trim().toUpperCase();
     const phone = digits(f.phone.value);
+    Object.assign(trackState, { code, phone }); // o que foi digitado continua no formulário depois da busca
     if (!digits(code) || phone.length < 10) {
+      trackState.miss = false;
       trackState.error = '<p class="notice notice--error">Informe o código do pedido e o telefone com DDD.</p>';
       renderTrack();
       $('#tr-code', el)?.focus();
@@ -1048,7 +1066,7 @@ export function initCart() {
       const i = Number(q.dataset.lineQty);
       const delta = Number(q.dataset.delta);
       setQty(i, (S.cart[i]?.qty || 0) + delta);
-      requestAnimationFrame(() => $(`[data-line-qty="${i}"][data-delta="${delta}"]`)?.focus({ preventScroll: true }) || $('[data-cart] .drawer__close')?.focus({ preventScroll: true }));
+      requestAnimationFrame(() => ($(`[data-line-qty="${i}"][data-delta="${delta}"]`) || $('[data-cart] .drawer__close'))?.focus({ preventScroll: true }));
       return;
     }
     const rm = e.target.closest('[data-line-remove]');

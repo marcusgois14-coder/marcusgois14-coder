@@ -2055,13 +2055,30 @@ function swivelStool(c) {
 
 // Banco comprido (madeira ou estofado)
 function bench(c) {
-  const { kit, m, fab, W, H, D, st, C } = c;
+  const { kit, m, fab, W, H, D, st, label } = c;
   const g = kit.group('bench');
-  const soft = c.upholstered && c.material !== 'fabric';
-  const top = soft ? fab : frameMat(c);
+  // estofado: tecido citado (linho, veludo...) ou "estofado/almofadado" no nome
+  // (a variável não pode se chamar "soft": esconderia a função soft() e o banco quebrava)
+  const padded = c.upholstered && (c.material !== 'fabric' || /estofad|almofadad/.test(label));
+  // banco baú: caixa fechada com tampa (acolchoada quando estofado), base recuada e vinco da tampa
+  if (/(^|[^a-z])bau([^a-z]|$)/.test(label)) {
+    const plinth = clamp(H * 0.05, 0.015, 0.03);
+    const lid = padded ? clamp(H * 0.2, 0.06, 0.1) : clamp(H * 0.06, 0.02, 0.035);
+    const bodyH = H - plinth - lid;
+    const bodyMat = padded ? fab : frameMat(c);
+    g.add(kit.place(kit.box(W - 0.03, plinth, D - 0.03, m.flat('#1f1c19', { roughness: 0.8 }), { part: 'detail' }), { y: plinth / 2 }));
+    if (padded) g.add(kit.place(soft(c, W - 0.01, bodyH, D - 0.01, bodyMat, { puff: 0.03, r: 0.012, part: 'main' }), { y: plinth + bodyH / 2 }));
+    else g.add(kit.place(kit.box(W - 0.01, bodyH, D - 0.01, bodyMat, { r: 0.004, grain: 'x', part: 'main' }), { y: plinth + bodyH / 2 }));
+    if (padded) g.add(kit.place(soft(c, W, lid, D, fab, { puff: 0.14, r: Math.min(0.03, lid * 0.45), part: 'main' }), { y: H - lid / 2 }));
+    else g.add(kit.place(kit.box(W, lid, D, bodyMat, { r: 0.005, grain: 'x', part: 'main' }), { y: H - lid / 2 }));
+    // vinco escuro entre a tampa e a caixa (mostra que abre)
+    g.add(kit.place(kit.box(W - 0.02, 0.004, D - 0.02, m.flat('#1f1c19', { roughness: 0.9 }), { part: 'detail' }), { y: H - lid - 0.001 }));
+    return g;
+  }
+  const top = padded ? fab : frameMat(c);
   const legMat = st.legs === 'metal' || c.material === 'metal' ? c.dark : m.wood(c.woodHex, { grain: 'oak' });
-  const t = soft ? clamp(H * 0.25, 0.08, 0.14) : clamp(H * 0.08, 0.03, 0.05);
-  if (soft) g.add(kit.place(soft(c, W, t, D, fab, { puff: 0.12, r: 0.025 }), { y: H - t / 2 }));
+  const t = padded ? clamp(H * 0.25, 0.08, 0.14) : clamp(H * 0.08, 0.03, 0.05);
+  if (padded) g.add(kit.place(soft(c, W, t, D, fab, { puff: 0.12, r: 0.025 }), { y: H - t / 2 }));
   else g.add(kit.place(kit.box(W, t, D, top, { r: 0.006, grain: 'x' }), { y: H - t / 2 }));
   const metal = legMat === c.dark;
   const lt = metal ? 0.012 : 0.022;

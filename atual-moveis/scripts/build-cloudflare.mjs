@@ -37,9 +37,18 @@ const stampJs = (src) =>
   src.replace(/((?:from|import)\s*\(?\s*)(['"])(\.{1,2}\/[^'"?]+?\.js)\2/g, (_, pre, q, path) => `${pre}${q}${path}?v=${v}${q}`);
 const stampHtml = (src) =>
   src.replace(/((?:href|src)=")(\/(?:assets|admin)\/(?!vendor\/)[^"?]+?\.(?:css|js))"/g, (_, pre, path) => `${pre}${path}?v=${v}"`);
+// Ilustrações (assets/img/art): versão própria, tirada do conteúdo dos SVGs, porque /assets/img fica 7 dias no aparelho.
+const artDir = join(out, 'assets/img/art');
+const artHash = createHash('sha256');
+walk(artDir).sort().forEach((p) => artHash.update(readFileSync(p)));
+const artV = artHash.digest('hex').slice(0, 10);
+const stampArt = (src) =>
+  src
+    .replace(/((?:href|src)=")(\/assets\/img\/art\/[^"?]+?\.svg)"/g, (_, pre, path) => `${pre}${path}?v=${artV}"`)
+    .replace(/const ART_V = '';/, `const ART_V = '${artV}';`);
 for (const p of files) {
   const src = readFileSync(p, 'utf8');
-  const next = extname(p) === '.js' ? stampJs(src) : extname(p) === '.html' ? stampJs(stampHtml(src)) : src;
+  const next = stampArt(extname(p) === '.js' ? stampJs(src) : extname(p) === '.html' ? stampJs(stampHtml(src)) : src);
   if (next !== src) writeFileSync(p, next);
 }
 
@@ -82,4 +91,4 @@ writeFileSync(
   ].join('\n')
 );
 
-console.log(`Pronto: ${out} (versão ${v})`);
+console.log(`Pronto: ${out} (versão ${v}, artes ${artV})`);

@@ -5,6 +5,7 @@ import {
 } from './state.js';
 import { openSheet, closeSheet, onOpen, setPanel, toggleMenu, sheet, drawer } from './layers.js';
 import { resolveCep, updateStoreUI } from './picker.js';
+import { perksHTML, stateArt, loaderHTML } from './art.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const mqMobile = matchMedia('(max-width: 749px)');
@@ -572,6 +573,7 @@ export function renderHome() {
   shelves.forEach((s, i) => {
     parts.push(shelfHTML(s.c, s.products));
     if (i === 0 && marquee.length) parts.push(marqueeHTML(marquee));
+    if (i === 0) parts.push(perksHTML()); // vantagens da loja (art.js)
     if (i === 0 && roomPromo) parts.push(roomPromo);
     if (i === 1 && mosaics.length) parts.push(`<section class="mosaic mosaic--2" aria-label="Inspirações">${mosaics.map((t) => tileHTML(t, true)).join('')}</section>`);
     if (i === 2 && rooms.length) parts.push(`<section class="mosaic mosaic--4" aria-label="Compre por ambiente">${rooms.map((t) => tileHTML(t, false)).join('')}</section>`);
@@ -582,6 +584,7 @@ export function renderHome() {
   if (!shelves.length && S.products.length) {
     parts.unshift(shelfHTML({ key: 'produtos', title: 'Produtos da loja', layout: 'five' }, S.products.slice(0, 12)));
     if (roomPromo) parts.splice(1, 0, roomPromo);
+    parts.splice(1, 0, perksHTML());
   }
   if (!S.products.length) {
     parts.unshift(`<section class="listing"><div class="listing__empty"><strong>Esta loja ainda está montando o catálogo online.</strong>Fale com a ${esc(S.store.name)} pelo WhatsApp ou escolha outra loja.</div></section>`);
@@ -728,7 +731,7 @@ export function initSearch() {
       ${
         hits.length
           ? `<div class="search__section"><p class="search__label">Produtos</p><div class="sresults" role="listbox" id="lb-prod" aria-label="Produtos">${shown.map(resultItem).join('')}</div></div>`
-          : `<div class="search__empty"><strong>Nenhum resultado para “${esc(q)}”</strong><p>Tente outras palavras ou fale com a loja pelo WhatsApp.</p></div>`
+          : `<div class="search__empty">${stateArt('empty-search')}<strong>Nenhum resultado para “${esc(q)}”</strong><p>Tente outras palavras ou fale com a loja pelo WhatsApp.</p></div>`
       }`;
     all.hidden = !hits.length;
     all.href = listUrl({ busca: q });
@@ -981,7 +984,7 @@ export function renderListing(params) {
           list.length
             ? `<div class="grid-products">${list.slice(0, shown).map((p) => cardHTML(p, { badgeAll: base.badgeAll })).join('')}</div>
                ${list.length > shown ? `<div class="listing__more"><button class="btn btn--outline" type="button" data-goto="${esc(keep({ n: shown + 24 }))}" data-keep-scroll>Carregar mais (${list.length - shown})</button></div>` : ''}`
-            : `<div class="listing__empty"><strong>Nenhum produto encontrado</strong>${chips.length ? 'Tente remover alguns filtros.' : `Esta loja não tem produtos nesta seção agora. <a class="link" href="${esc(waLink(storeWhatsapp(), `Olá! Procuro ${base.title} na ${S.store.name}.`))}" target="_blank" rel="noopener">Pergunte pelo WhatsApp</a>.`}</div>`
+            : `<div class="listing__empty">${stateArt('empty-search')}<strong>Nenhum produto encontrado</strong>${chips.length ? 'Tente remover alguns filtros.' : `Esta loja não tem produtos nesta seção agora. <a class="link" href="${esc(waLink(storeWhatsapp(), `Olá! Procuro ${base.title} na ${S.store.name}.`))}" target="_blank" rel="noopener">Pergunte pelo WhatsApp</a>.`}</div>`
         }
       </div>
     </div>`;
@@ -1147,9 +1150,18 @@ export function openProduct(slug, { push = true } = {}) {
   const firstAvailable = p.variants?.find((v) => v.in_stock) || p.variants?.[0] || null;
   pdpState = { p, variant: firstAvailable, imgIndex: 0, qty: 1, prevUrl: location.pathname + location.search };
   rememberViewed(p.id);
-  if (push) history.pushState({ produto: p.slug }, '', productUrl(p));
+  if (push) history.pushState({ produto: p.slug }, '', overlayUrl(p));
   showPdpSheet();
   return true;
+}
+
+// URL do produto aberto por cima da página atual: guarda a página de baixo (listagem ou ambiente 3D),
+// assim fechar, voltar e recarregar continuam nela. O link para compartilhar segue sendo productUrl().
+function overlayUrl(p) {
+  const params = new URLSearchParams(location.pathname.startsWith('/loja/') ? location.search : '');
+  ['produto', 'add'].forEach((k) => params.delete(k));
+  params.set('produto', p.slug);
+  return `${storePath()}?${params}`;
 }
 
 // Abre a janela do produto com o estado atual (também na volta do 3D, sem nova entrada no histórico)
@@ -1317,7 +1329,7 @@ export function initProductSheet() {
       out.innerHTML = '<p class="f-error">Informe um CEP com 8 números.</p>';
       return;
     }
-    out.innerHTML = '<span class="spinner"></span>';
+    out.innerHTML = loaderHTML('Calculando a entrega…', { size: 'sm' });
     try {
       setLocation(await resolveCep(cep));
       updateStoreUI();

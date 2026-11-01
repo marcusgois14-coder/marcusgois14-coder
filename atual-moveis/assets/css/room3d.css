@@ -536,6 +536,28 @@
   color: var(--rm-muted);
 }
 
+/* "no PIX" nunca quebra no meio */
+.rm-prod__price small,
+.rm-placed__meta small,
+.rm-sel__meta small {
+  white-space: nowrap;
+}
+
+/* sem WebGL a lista continua visível, mas desativada */
+.rm-prod:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rm-prod:disabled:hover {
+  background: none;
+}
+
+.rm-prod:disabled .rm-prod__plus {
+  background: rgba(0, 0, 0, 0.35);
+  transform: none;
+}
+
 .rm-prod__plus {
   display: grid;
   place-items: center;
@@ -1078,6 +1100,44 @@
   color: var(--rm-ink);
 }
 
+/* Sem WebGL: cartão com o aviso e o botão de voltar */
+.rm-fail {
+  max-width: 360px;
+  padding: 24px 26px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+}
+
+.rm-fail__icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 10px;
+  border-radius: 999px;
+  background: rgba(154, 91, 0, 0.12);
+  color: var(--rm-warn);
+}
+
+.rm-fail__icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.rm-fail__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.rm-fail__text {
+  margin: 6px 0 16px;
+  color: var(--rm-muted);
+  font-size: 14px;
+}
+
 .rm-spinner {
   width: 18px;
   height: 18px;
@@ -1480,6 +1540,11 @@
     width: 18px;
     height: 18px;
   }
+}
+
+/* Avisos do site (ex.: "3 itens adicionados ao carrinho") acima do rodapé do ambiente, sem cobrir o botão */
+body.is-room .toast {
+  bottom: calc(86px + env(safe-area-inset-bottom, 0px));
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -3,6 +3,7 @@
 import { $, $$, esc, icon, digits, km, fmtCep, geocode, geocodeInBrowser, currentPosition, bizMessage, storage } from './lib.js';
 import { S, setLocation, storesForLocation, deliveryStatus, emit } from './state.js';
 import { openSheet, closeSheet } from './layers.js';
+import { mascotGreetingHTML, stateArt } from './art.js';
 
 let busy = false;
 let status = '';
@@ -71,6 +72,7 @@ function render() {
       <button class="sheet__close" type="button" aria-label="Fechar" data-sheet-close>${icon('i-close')}</button>
     </div>
     <div class="sheet__body">
+      ${!loc && !storage.get('atual:picked', false) ? mascotGreetingHTML() : ''}
       <p class="picker__intro">Cada loja da rede tem o seu catálogo e entrega em até ${esc(S.net?.default_radius_km || 30)} km. Informe onde você vai receber para ver as lojas que atendem o seu endereço.</p>
       <form class="picker__actions" data-picker-form novalidate>
         <div class="f-grid">
@@ -87,7 +89,7 @@ function render() {
       ${loc ? `<p class="picker__where">${icon('i-pin', 'inline-ico')} Entregar em <strong>${esc(locLabel(loc))}</strong> · <button type="button" class="link" data-clear-loc>trocar</button></p>` : ''}
       ${loc ? `<h3 class="picker__section">${near.length ? 'Lojas que entregam no seu endereço' : 'Nenhuma loja entrega neste endereço'}</h3>` : ''}
       ${loc && near.length ? `<div class="store-list">${near.map((s) => storeOption(s, { current: s.slug === cur, distance: s.distance })).join('')}</div>` : ''}
-      ${loc && !near.length ? '<p class="notice notice--warn">Este endereço está fora da área de entrega de todas as lojas. Você ainda pode navegar pelos catálogos ou falar com uma loja pelo WhatsApp.</p>' : ''}
+      ${loc && !near.length ? `<div class="picker__out">${stateArt('out-of-range', { size: 'sm' })}<p class="notice notice--warn">Este endereço está fora da área de entrega de todas as lojas. Você ainda pode navegar pelos catálogos ou falar com uma loja pelo WhatsApp.</p></div>` : ''}
       <h3 class="picker__section">${loc ? 'Outras lojas da rede' : 'Todas as lojas'}</h3>
       <div class="store-list">${far.map((s) => storeOption(s, { current: s.slug === cur, distance: loc ? s.distance : null })).join('')}</div>
     </div>`;

@@ -75,16 +75,13 @@ const isShown = (el) => {
 };
 
 // Entrada curta (opacity + translate) que não deixa nada escondido no fim: fill 'backwards' só vale durante o atraso.
+// Só o quadro inicial (offset 0): o final é o valor natural do elemento (ex.: textos com opacity .7), sem ler
+// getComputedStyle, que forçava um recálculo de estilo por elemento nas sequências.
 function enter(el, { x = 0, y = 14, s = null, delay = 0, duration = 440, easing = EASE_OUT } = {}) {
   if (!el) return null;
-  const o = getComputedStyle(el).opacity || '1';
-  const from = { opacity: 0, translate: `${x}px ${y}px` };
-  const to = { opacity: o, translate: '0px 0px' };
-  if (s != null) {
-    from.scale = String(s);
-    to.scale = '1';
-  }
-  return play(el, [from, to], { duration, delay, easing, fill: 'backwards' });
+  const from = { offset: 0, opacity: 0, translate: `${x}px ${y}px` };
+  if (s != null) from.scale = String(s);
+  return play(el, [from], { duration, delay, easing, fill: 'backwards' });
 }
 
 /* =========================================================
@@ -229,11 +226,7 @@ function cartIcon() {
 }
 
 const quad = (a, b, c, t) => (1 - t) * (1 - t) * a + 2 * (1 - t) * t * b + t * t * c;
-function curveMinY(a, b, c) {
-  const den = a - 2 * b + c;
-  const t = den ? (a - b) / den : -1;
-  return t > 0 && t < 1 ? quad(a, b, c, t) : Math.min(a, c);
-}
+const cubic = (a, b, c, d, t) => (1 - t) ** 3 * a + 3 * (1 - t) ** 2 * t * b + 3 * (1 - t) * t * t * c + t ** 3 * d;
 
 function ghostOf(img, cls = '') {
   const g = document.createElement('div');
@@ -247,7 +240,8 @@ function ghostOf(img, cls = '') {
   return g;
 }
 
-// Voo em arco de uma miniatura (começa no centro da foto e termina no centro do alvo).
+// Voo em arco de uma miniatura da foto (mesma proporção da foto, então o produto aparece inteiro):
+// sai do centro da parte visível da foto, acelera e entra no ícone ainda visível, que reage no pouso.
 export function flyToCart(sourceEl, target = cartIcon(), { onLand } = {}) {
   const img = sourceEl?.tagName === 'IMG' ? sourceEl : sourceImage(sourceEl) || $('img', sourceEl || document.body);
   if (!motionOn() || !img || !target) {
@@ -256,64 +250,64 @@ export function flyToCart(sourceEl, target = cartIcon(), { onLand } = {}) {
   }
   const from = img.getBoundingClientRect();
   const to = ($('svg', target) || target).getBoundingClientRect();
-  const size = mqMobile.matches ? 58 : 72;
-  const visTop = Math.max(from.top, 0);
-  const visBottom = Math.min(from.bottom, innerHeight);
+  const ar = clamp(from.width / Math.max(1, from.height), 0.62, 1.4);
+  const base = mqMobile.matches ? 62 : 76; // lado maior da miniatura
+  const gw = Math.round(ar >= 1 ? base : base * ar);
+  const gh = Math.round(ar >= 1 ? base / ar : base);
+  const visTop = clamp(from.top, 0, innerHeight);
+  const visBottom = clamp(from.bottom, 0, innerHeight);
   const p0 = { x: from.left + from.width / 2, y: (visTop + visBottom) / 2 };
   const p2 = { x: to.left + to.width / 2, y: to.top + to.height / 2 };
   const dx = p2.x - p0.x;
   const dy = p2.y - p0.y;
   const dist = Math.hypot(dx, dy) || 1;
-  // arco suave para cima: corre por baixo do cabeçalho e só entra nele no fim, direto no ícone
-  let nx = -dy / dist;
-  let ny = dx / dist;
-  if (ny > 0) {
-    nx = -nx;
-    ny = -ny;
-  }
-  let bow = clamp(dist * 0.15, 24, 150);
-  const ctrl = () => ({ x: (p0.x + p2.x) / 2 + nx * bow, y: (p0.y + p2.y) / 2 + ny * bow });
-  let c = ctrl();
-  for (let k = 0; k < 8 && curveMinY(p0.y, c.y, p2.y) < size * 0.32; k++) {
-    bow *= 0.7;
-    c = ctrl();
-  }
-  const end = 18 / size;
+  // "Swoosh" (curva cúbica): sai em direção ao carrinho e termina SUBINDO por baixo do ícone. Assim a miniatura
+  // nunca desliza na horizontal pelo cabeçalho nem passa por cima do coração/busca ao lado, e nunca vai acima do ícone.
+  const c1 = { x: p0.x + dx * 0.45, y: p0.y + dy * 0.15 };
+  const c2 = { x: p2.x - dx * 0.04, y: p2.y + clamp(Math.abs(dy) * 0.45, 60, 240) };
+  const end = clamp(Math.max(to.width, to.height) / Math.max(gw, gh), 0.22, 0.4); // termina do tamanho do ícone
+  const tilt = dx >= 0 ? -1 : 1;
+  // some só nos últimos ~30-45 px, já do tamanho do ícone e em cima dele
+  const fade = clamp(60 / dist, 0.05, 0.1);
   const frames = [];
-  const N = 22;
+  const N = 30;
   for (let i = 0; i <= N; i++) {
-    const t = i / N;
-    const x = quad(p0.x, c.x, p2.x, t) - p0.x;
-    const y = quad(p0.y, c.y, p2.y, t) - p0.y;
+    const u = i / N;
+    // começa devagar (a miniatura "salta" da foto) e chega ao ícone ainda com ~70% da velocidade média: sem rastejar no fim
+    const p = 0.65 * (3 * u * u - 2 * u * u * u) + 0.35 * u * u;
+    const x = cubic(p0.x, c1.x, c2.x, p2.x, p) - p0.x;
+    const y = cubic(p0.y, c1.y, c2.y, p2.y, p) - p0.y;
     let s;
-    if (t < 0.12) s = 0.5 + 0.6 * (1 - (1 - t / 0.12) ** 3);
-    else if (t < 0.22) s = 1.1 - 0.1 * ((t - 0.12) / 0.1);
-    else s = 1 - (1 - end) * ((t - 0.22) / 0.78) ** 1.5;
-    const o = t < 0.05 ? t / 0.05 : t > 0.86 ? Math.max(0, 1 - (t - 0.86) / 0.14) : 1;
-    const rot = -9 * Math.sin(Math.PI * t);
-    frames.push({ offset: t, transform: `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) rotate(${rot.toFixed(2)}deg) scale(${s.toFixed(3)})`, opacity: +o.toFixed(3) });
+    if (u < 0.14) s = 0.55 + 0.51 * (1 - (1 - u / 0.14) ** 3);
+    else if (u < 0.24) s = 1.06 - 0.06 * ((u - 0.14) / 0.1);
+    else s = 1 - (1 - end) * ((u - 0.24) / 0.76) ** 1.25;
+    const o = u < 0.05 ? u / 0.05 : u > 1 - fade ? Math.max(0, (1 - u) / fade) : 1;
+    const rot = 7 * tilt * Math.sin(Math.PI * u);
+    frames.push({ offset: u, transform: `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) rotate(${rot.toFixed(2)}deg) scale(${s.toFixed(3)})`, opacity: +o.toFixed(3) });
   }
   const g = ghostOf(img);
-  g.style.cssText = `left:${p0.x - size / 2}px;top:${p0.y - size / 2}px;width:${size}px;height:${size}px`;
+  g.style.cssText = `left:${(p0.x - gw / 2).toFixed(1)}px;top:${(p0.y - gh / 2).toFixed(1)}px;width:${gw}px;height:${gh}px`;
   document.body.append(g);
-  const duration = Math.round(clamp(360 + dist * 0.15, 420, 560));
+  const duration = Math.round(clamp(380 + dist * 0.12, 440, 560));
   flight.active++;
-  const a = play(g, frames, { duration, easing: 'cubic-bezier(.45, .05, .25, 1)', fill: 'both' });
-  const landAt = Math.round(duration * 0.88);
+  const a = play(g, frames, { duration, easing: 'linear', fill: 'both' });
+  // o ícone reage quando a miniatura chega nele (ela some nos últimos quadros, já em cima do ícone)
+  const landAt = Math.round(duration * (1 - fade * 0.6));
   const promise = new Promise((resolve) => {
     let landed = false;
     const land = () => {
       if (landed) return;
       landed = true;
       flight.active = Math.max(0, flight.active - 1);
-      g.remove();
       landOnIcon(target);
       onLand?.();
       resolve(true);
     };
-    // pousa um pouco antes do fim (o resto da animação é só o sumiço)
     setTimeout(land, landAt);
-    after(a, land);
+    after(a, () => {
+      land();
+      g.remove();
+    });
   });
   promise.landAt = landAt;
   return promise;
@@ -350,10 +344,20 @@ function landOnIcon(btn) {
 
 // Dentro de gaveta/janela (produto, favoritos, "Complete seu ambiente"): a gaveta do carrinho abre na hora
 // e a foto voa até a linha do item, já na posição final da gaveta.
-function flyToDrawerLine(img, d) {
+function flyToDrawerLine(img, d, trigger) {
   const from = img.getBoundingClientRect();
-  const side = Math.min(from.width, from.height);
-  const start = { left: from.left + (from.width - side) / 2, top: Math.max(from.top, Math.min(from.top + (from.height - side) / 2, innerHeight - side)), side };
+  const visH = Math.min(from.bottom, innerHeight) - Math.max(from.top, 0);
+  let side = Math.min(from.width, from.height);
+  let start = { left: from.left + (from.width - side) / 2, top: Math.max(from.top, Math.min(from.top + (from.height - side) / 2, innerHeight - side)) };
+  let pop = false;
+  // foto já rolada para fora da tela (no celular o botão fica abaixo da foto): sai do botão tocado,
+  // em vez de entrar pela borda de cima com a linha do carrinho vazia esperando
+  if (visH < from.height * 0.4 && trigger?.isConnected) {
+    const b = trigger.getBoundingClientRect();
+    side = 64;
+    start = { left: clamp(b.left + b.width / 2 - side / 2, 8, innerWidth - side - 8), top: clamp(b.top + b.height / 2 - side / 2, 8, innerHeight - side - 8) };
+    pop = true;
+  }
   const src = img.currentSrc || img.src;
   flight.lineKey = lineKeyFor(d.id, d.variant);
   raf(() => {
@@ -388,11 +392,14 @@ function flyToDrawerLine(img, d) {
       const k = i / N;
       const x = quad(0, dx * 0.5, dx, k);
       const y = quad(0, Math.min(0, dy) - lift, dy, k);
-      const s = 1 + (sc - 1) * (1 - (1 - k) ** 2.2);
-      frames.push({ offset: k, transform: `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) scale(${s.toFixed(4)})` });
+      let s = 1 + (sc - 1) * (1 - (1 - k) ** 2.2);
+      if (pop && k < 0.2) s *= 0.6 + 0.4 * (1 - (1 - k / 0.2) ** 3); // nasce pequena no botão e cresce
+      const f = { offset: k, transform: `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) scale(${s.toFixed(4)})` };
+      if (pop) f.opacity = k < 0.12 ? +(k / 0.12).toFixed(3) : 1;
+      frames.push(f);
     }
     flight.active++;
-    const a = play(g, frames, { duration: 620, easing: 'cubic-bezier(.4, 0, .2, 1)', fill: 'forwards' });
+    const a = play(g, frames, { duration: pop ? 540 : 620, easing: 'cubic-bezier(.4, 0, .2, 1)', fill: 'forwards' });
     after(a, () => {
       flight.active = Math.max(0, flight.active - 1);
       flight.lineKey = null;
@@ -425,16 +432,16 @@ function setupFlight() {
     const img = sourceImage(trigger);
     if (!img) return;
     if (trigger.closest('.sheet, .drawer')) {
-      if (d.open !== false) flyToDrawerLine(img, d);
+      if (d.open !== false) flyToDrawerLine(img, d, trigger);
       return;
     }
     const icon = cartIcon();
     if (!icon) return;
     flight.badgePending = true;
     const f = flyToCart(img, icon);
-    // a gaveta abre logo depois do pouso, com tempo de ver o contador saltar
+    // a gaveta abre logo depois do pouso, com tempo de ver o ícone e o contador reagirem antes de ela cobrir o ícone
     // (o cart.js espera esse tempo; sem este módulo, ou com movimento reduzido, ele abre na hora)
-    if (d.open !== false) d.delay = Math.max(d.delay || 0, (f.landAt || 440) + 130);
+    if (d.open !== false) d.delay = Math.max(d.delay || 0, (f.landAt || 440) + 70);
   });
 }
 
@@ -451,6 +458,7 @@ export function sparkle(el, { colors = ['#ea1e2a', '#f4802b', '#ea1e2a', '#ff6a4
   layer.style.top = `${r.top + r.height / 2}px`;
   const ring = document.createElement('i');
   ring.className = 'm-burst__ring';
+  ring.style.borderColor = colors[0];
   layer.append(ring);
   const parts = [];
   const N = 8;
@@ -493,8 +501,12 @@ function setupWish() {
         const now = btn.classList.contains('is-active');
         if (now === was) return;
         if (now) {
-          play($('.i-full', btn), [{ scale: '.25' }, { scale: '1' }], { duration: 640, easing: SPRING });
-          sparkle(btn);
+          const full = $('.i-full', btn);
+          play(full, [{ scale: '.25' }, { scale: '1' }], { duration: 640, easing: SPRING });
+          // explosão na cor do coração (a cor de destaque de cada loja) com o laranja da marca
+          // (lê o token, não a cor calculada: o botão ainda está no meio da transição de cor)
+          const c = getComputedStyle(btn).getPropertyValue('--accent').trim();
+          sparkle(btn, c ? { colors: [c, '#f4802b', c, '#ffb27a'] } : undefined);
         } else {
           play($('.i-empty', btn), [{ scale: '.7', opacity: 0.4 }, { scale: '1', opacity: 1 }], { duration: 420, easing: SPRING_SOFT });
         }
@@ -551,9 +563,13 @@ function lineKeyFor(id, variant) {
 }
 const lineKey = (line) => `${$('[data-product]', line)?.dataset.product || ''}|${($('.line__name small', line)?.textContent || '').trim()}`;
 
+// gaveta -> função que fotografa as linhas (chamada quando a gaveta abre)
+const lineSnaps = new Map();
+
 function watchLines(host) {
   if (!host) return;
   const st = { snap: null, scrolled: false, ship: null };
+  const isOpen = () => !!host.closest('.drawer')?.classList.contains('is-open');
   host.addEventListener('scroll', (e) => e.target.matches?.('.cart__body') && (st.scrolled = e.target.scrollTop > 4), { capture: true, passive: true });
   const read = () => {
     const hr = host.getBoundingClientRect();
@@ -566,14 +582,29 @@ function watchLines(host) {
     if (up) map.set('@upsell', { el: up, top: up.getBoundingClientRect().top - hr.top, qty: '', block: true });
     return map;
   };
+  const shipOf = () => {
+    const ship = $('.ship__bar span', host);
+    return ship ? parseFloat(ship.style.width) || 0 : null;
+  };
+  const snapshot = (now) => {
+    st.snap = new Map([...now].map(([k, v]) => [k, { ...v, clone: v.block ? null : v.el.cloneNode(true), el: null }]));
+    st.scrolled = false;
+    st.ship = shipOf();
+  };
+  lineSnaps.set(host, () => motionOn() && snapshot(read()));
   new MutationObserver(() => {
-    const open = !!host.closest('.drawer')?.classList.contains('is-open');
+    // Gaveta fechada: não mede nem clona nada (no boot o carrinho é renderizado com a página ainda montando,
+    // e medir aqui forçaria um layout inteiro). A foto de referência é tirada quando a gaveta abre.
+    if (!motionOn() || !isOpen()) {
+      st.snap = null;
+      return;
+    }
     const now = read();
     const ship = $('.ship__bar span', host);
-    const shipPct = ship ? parseFloat(ship.style.width) || 0 : null;
+    const shipPct = shipOf();
     const prev = st.snap;
-    // posições relativas à gaveta: valem mesmo se a última foto foi tirada com ela fechada
-    if (motionOn() && open && prev && !st.scrolled) {
+    // posições relativas à gaveta (não dependem de onde ela está no meio da animação de abrir)
+    if (prev && !st.scrolled) {
       const hr = host.getBoundingClientRect();
       prev.forEach((p, key) => {
         if (!now.has(key) && p.clone && !p.block) exitGhost(p, hr);
@@ -598,9 +629,7 @@ function watchLines(host) {
         play(ship, [{ scale: `${clamp(st.ship / shipPct, 0, 4)} 1` }, { scale: '1 1' }], { duration: 700, easing: EASE_OUT });
       }
     }
-    st.snap = new Map([...now].map(([k, v]) => [k, { ...v, clone: v.block ? null : v.el.cloneNode(true), el: null }]));
-    st.scrolled = false;
-    st.ship = shipPct;
+    snapshot(now);
   }).observe(host, { childList: true });
 }
 
@@ -635,8 +664,9 @@ function variantFor(el) {
   return '';
 }
 const unrendered = (r) => !r.width && !r.height;
-function needsHiding(r) {
-  return r.top >= innerHeight - 2 || r.left >= innerWidth || r.right <= 0;
+// vh/vw lidos uma vez por passada: no Chrome, ler innerHeight/innerWidth depois de mexer em classes força estilo+layout
+function needsHiding(r, vh, vw) {
+  return r.top >= vh - 2 || r.left >= vw || r.right <= 0;
 }
 function hide(el) {
   el.classList.add('m-reveal');
@@ -645,38 +675,77 @@ function hide(el) {
 }
 
 // Elemento ainda não renderizado (seção escondida): fica visível e é reavaliado quando a seção aparece.
-function prepareGroup(g) {
-  const r = g.getBoundingClientRect();
-  if (unrendered(r)) return;
-  seen.add(g);
-  const kids = Array.from(g.children);
-  kids.forEach((k) => seen.add(k));
-  if (!needsHiding(r)) return;
-  kids.forEach(hide);
-  groups.add(g);
-  io.observe(g);
+// Primeiro mede tudo (um layout só), depois esconde: medir e escrever intercalado forçava um layout por elemento.
+function prepareAll(groupEls, els) {
+  if (!groupEls.length && !els.length) return;
+  const gr = groupEls.map((g) => g.getBoundingClientRect());
+  const er = els.map((el) => el.getBoundingClientRect());
+  const vh = innerHeight;
+  const vw = innerWidth;
+  groupEls.forEach((g, i) => {
+    if (unrendered(gr[i])) return;
+    seen.add(g);
+    const kids = Array.from(g.children);
+    kids.forEach((k) => seen.add(k));
+    if (!needsHiding(gr[i], vh, vw)) return;
+    kids.forEach(hide);
+    groups.add(g);
+    io.observe(g);
+  });
+  els.forEach((el, i) => {
+    if (seen.has(el) || unrendered(er[i])) return; // (filho de um grupo acima: já tratado)
+    seen.add(el);
+    if (!needsHiding(er[i], vh, vw)) return;
+    hide(el);
+    io.observe(el);
+  });
+  checkEndSoon();
 }
 
-function prepare(el) {
-  const r = el.getBoundingClientRect();
-  if (unrendered(r)) return;
-  seen.add(el);
-  if (!needsHiding(r)) return;
-  hide(el);
-  io.observe(el);
-}
-
-function scan(root) {
-  if (!revealReady || !motionOn() || !root || root.nodeType !== 1) return;
+function collect(root, gs, es) {
   const pick = (sel) => [...(root.matches(sel) ? [root] : []), ...root.querySelectorAll(sel)];
-  pick(GROUP)
-    .filter((g) => !seen.has(g) && (g.hasAttribute('data-reveal-stagger') || inScope(g)))
-    .forEach(prepareGroup);
-  pick(`${AUTO}, [data-reveal]`)
-    .filter((el) => !seen.has(el) && (el.hasAttribute('data-reveal') || inScope(el)))
-    .forEach(prepare);
+  pick(GROUP).forEach((g) => !seen.has(g) && !gs.includes(g) && (g.hasAttribute('data-reveal-stagger') || inScope(g)) && gs.push(g));
+  pick(`${AUTO}, [data-reveal]`).forEach((el) => !seen.has(el) && !es.includes(el) && (el.hasAttribute('data-reveal') || inScope(el)) && es.push(el));
+}
+
+function scan(...roots) {
+  if (!revealReady || !motionOn()) return;
+  const gs = [];
+  const es = [];
+  roots.forEach((root) => root && root.nodeType === 1 && collect(root, gs, es));
+  prepareAll(gs, es);
 }
 export const refreshReveal = (root = document.body) => scan(root);
+
+// Rede de segurança: no fim da página o último bloco (ex.: "Sobre" do rodapé no computador) pode nunca passar
+// da linha de disparo (6% acima da borda de baixo). Quando a rolagem para no fim, revela o que está na tela.
+// Roda uma vez quando a rolagem termina (não a cada quadro), e só lê o layout se ainda houver algo escondido.
+let endTimer = 0;
+function checkEndSoon() {
+  clearTimeout(endTimer);
+  endTimer = setTimeout(checkEnd, 140);
+}
+function checkEnd() {
+  if (!revealReady || !motionOn() || !document.querySelector('.m-reveal:not(.is-in)')) return;
+  const vh = innerHeight;
+  if (vh + scrollY < document.documentElement.scrollHeight - 8) return;
+  const pending = $$('.m-reveal:not(.is-in)');
+  const tracks = $$('.slider__track, .cats__track, [data-reveal-stagger]').filter((g) => groups.has(g) && g.querySelector(':scope > .m-reveal:not(.is-in)'));
+  const rs = pending.map((el) => el.getBoundingClientRect());
+  const vw = innerWidth;
+  // grupo (trilho) que ficou no fim: mede os filhos agora, revela depois
+  const ms = tracks.filter((g) => { const r = g.getBoundingClientRect(); return r.top < vh && r.bottom > 0; }).map(measureGroup);
+  let i = 0;
+  pending.forEach((el, k) => {
+    if (groups.has(el.parentElement) || !(rs[k].top < vh && rs[k].bottom > 0)) return;
+    io.unobserve(el);
+    revealEl(el, Math.min(i++, 6) * 70);
+  });
+  ms.forEach((m) => {
+    io.unobserve(m.g);
+    applyGroup(m, vw);
+  });
+}
 
 function revealEl(el, delay = 0) {
   if (!el.classList.contains('m-reveal')) return;
@@ -690,13 +759,16 @@ function revealEl(el, delay = 0) {
   }, total + 1050);
 }
 
-function revealGroup(g) {
+// Grupo em duas fases: mede os filhos de todos os grupos, depois mexe nas classes (sem layout forçado a cada filho).
+function measureGroup(g) {
+  const kids = Array.from(g.children).filter((k) => k.classList.contains('m-reveal'));
+  return { g, kids, rs: kids.map((k) => k.getBoundingClientRect()) };
+}
+function applyGroup({ g, kids, rs }, vw) {
   const step = Number(g.getAttribute('data-reveal-stagger')) || 70;
   let i = 0;
-  Array.from(g.children).forEach((k) => {
-    if (!k.classList.contains('m-reveal')) return;
-    const r = k.getBoundingClientRect();
-    if (r.right > 0 && r.left < innerWidth) revealEl(k, Math.min(i++, 8) * step);
+  kids.forEach((k, n) => {
+    if (rs[n].right > 0 && rs[n].left < vw) revealEl(k, Math.min(i++, 8) * step);
     else k.classList.remove(...REVEAL_CLASSES); // fora da tela na horizontal: já fica pronto para quando rolar
   });
 }
@@ -704,12 +776,15 @@ function revealGroup(g) {
 function onIntersect(entries) {
   const vis = entries.filter((e) => e.isIntersecting);
   vis.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top || a.boundingClientRect.left - b.boundingClientRect.left);
+  if (!vis.length) return;
+  const vw = vis[0].rootBounds?.width || innerWidth; // largura da tela sem forçar layout
+  const measured = vis.filter((e) => groups.has(e.target)).map((e) => measureGroup(e.target));
   let i = 0;
   vis.forEach((e) => {
     io.unobserve(e.target);
-    if (groups.has(e.target)) revealGroup(e.target);
-    else revealEl(e.target, Math.min(i++, 8) * 70);
+    if (!groups.has(e.target)) revealEl(e.target, Math.min(i++, 8) * 70);
   });
+  measured.forEach((m) => applyGroup(m, vw));
 }
 
 function revealAll() {
@@ -739,21 +814,38 @@ function setupReveal() {
   }
   new MutationObserver((recs) => {
     if (!revealReady || !motionOn()) return;
+    const roots = [];
     for (const r of recs) {
       if (r.target.nodeType === 1 && r.target.matches?.(GROUP) && seen.has(r.target)) {
         // trilho que trocou os filhos (ex.: categorias): reavalia o grupo inteiro
         seen.delete(r.target);
         groups.delete(r.target);
         io.unobserve(r.target);
-        prepareGroup(r.target);
+        roots.push(r.target);
         continue;
       }
       r.addedNodes.forEach((n) => {
-        if (n.nodeType === 1 && !String(n.className).startsWith('m-')) scan(n);
+        if (n.nodeType === 1 && !String(n.className).startsWith('m-')) roots.push(n);
       });
     }
+    // uma varredura só por lote de mudanças (medições juntas, depois as escritas)
+    if (roots.length) scan(...roots);
   }).observe(document.body, { childList: true, subtree: true });
   window.addEventListener('beforeprint', revealAll);
+  // teclado: o que recebe foco aparece na hora (o anel de foco nunca fica num elemento ainda transparente)
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      const el = e.target.closest?.('.m-reveal');
+      if (!el) return;
+      io.unobserve(el);
+      el.classList.remove(...REVEAL_CLASSES);
+      el.style.removeProperty('--m-delay');
+    },
+    true
+  );
+  window.addEventListener('scroll', checkEndSoon, { passive: true });
+  window.addEventListener('resize', checkEndSoon, { passive: true });
 }
 
 /* =========================================================
@@ -769,13 +861,13 @@ function flatten(root, depth = 0) {
   return out;
 }
 
-function staggerList(items, { x = 0, y = 14, delay = 70, step = 34, max = 10, duration = 460, skip = null } = {}) {
+// Mede tudo antes de animar: medir depois de cada animate() forçava um recálculo de estilo por item ao abrir a camada.
+function staggerList(items, { x = 0, y = 14, delay = 70, step = 34, max = 10, duration = 460, skip = null, rects = null } = {}) {
+  const list = items.slice(0, 30).filter((el) => !(skip && skip(el)) && !el.matches('script, template, [hidden], .visually-hidden'));
+  const rs = list.map((el) => rects?.get(el) || el.getBoundingClientRect());
   let i = 0;
-  items.slice(0, 30).forEach((el) => {
-    if (i >= max || (skip && skip(el))) return;
-    if (el.matches('script, template, [hidden], .visually-hidden')) return;
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) return;
+  list.forEach((el, k) => {
+    if (i >= max || !rs[k].width || !rs[k].height) return;
     enter(el, { x, y, delay: delay + i * step, duration });
     i++;
   });
@@ -783,12 +875,19 @@ function staggerList(items, { x = 0, y = 14, delay = 70, step = 34, max = 10, du
 
 function staggerSheet(body) {
   const top = body.getBoundingClientRect().top;
-  const items = flatten(body).filter((el) => el.getBoundingClientRect().top - top < innerHeight);
-  staggerList(items, { y: 16, step: 32, max: 11 });
+  const vh = innerHeight;
+  const all = flatten(body);
+  const rects = new Map(all.map((el) => [el, el.getBoundingClientRect()]));
+  staggerList(
+    all.filter((el) => rects.get(el).top - top < vh),
+    { y: 16, step: 32, max: 11, rects }
+  );
 }
 
 function onLayerOpen(el) {
   if (!motionOn()) return;
+  // gaveta do carrinho/favoritos: foto de referência das linhas para as próximas mudanças (FLIP)
+  lineSnaps.forEach((snap, host) => el.contains(host) && snap());
   if (el.matches('.sheet--3d')) return;
   if (el.matches('.sheet')) {
     const body = $('.sheet__body', el);
@@ -815,11 +914,36 @@ function onLayerOpen(el) {
 function setupLayers() {
   const layers = $$('.sheet, .drawer, .menu-drawer');
   const mo = new MutationObserver((recs) => {
+    const opened = [];
+    const closed = [];
     recs.forEach((r) => {
       const was = (r.oldValue || '').split(/\s+/).includes('is-open');
       const is = r.target.classList.contains('is-open');
-      if (is && !was) onLayerOpen(r.target);
-      if (!is && was) onLayerClose(r.target);
+      if (is && !was) opened.push(r.target);
+      if (!is && was) closed.push(r.target);
+    });
+    // Troca de camada (produto -> carrinho, carrinho -> checkout...): a que sai some no lugar, rápido,
+    // em vez de deslizar para um lado enquanto a nova entra por outro (no celular a janela descia por cima da gaveta).
+    // Roda antes do próximo cálculo de estilo, então a transição já nasce com a regra .m-handoff.
+    const handoff = opened.length > 0 && motionOn();
+    if (handoff && closed.length) {
+      // as duas sobreposições escuras trocam no mesmo quadro (sem o fundo clarear ou escurecer no meio da troca);
+      // tira a regra depois que o layers.js já aplicou o is-visible (ele usa um requestAnimationFrame)
+      const ovs = $$('[data-overlay], [data-sheet-overlay]');
+      ovs.forEach((o) => o.classList.add('m-instant'));
+      raf(() => raf(() => ovs.forEach((o) => o.classList.remove('m-instant'))));
+    }
+    closed.forEach((el) => {
+      if (handoff && el.matches('.sheet:not(.sheet--3d), .drawer') && !el.classList.contains('is-open')) {
+        el.classList.add('m-handoff');
+        clearTimeout(el.__mHandoff);
+        el.__mHandoff = setTimeout(() => el.classList.remove('m-handoff'), 320);
+      }
+      onLayerClose(el);
+    });
+    opened.forEach((el) => {
+      el.classList.remove('m-handoff');
+      onLayerOpen(el);
     });
   });
   layers.forEach((el) => mo.observe(el, { attributes: true, attributeFilter: ['class'], attributeOldValue: true }));
@@ -1016,10 +1140,10 @@ function heroActivate(slide, intro = true) {
     kbAnims.set(img, play(img, KB[i % KB.length], { duration: 9000, easing: 'cubic-bezier(.3, .1, .6, 1)', fill: 'forwards' }));
   }
   if (!intro) return;
-  const items = $$('.hero__kicker, .hero__title, .hero__text', slide).filter((e) => getComputedStyle(e).display !== 'none');
-  items.forEach((e, k) => enter(e, { y: 26, delay: 160 + k * 110, duration: 900 }));
+  // (sem getComputedStyle: animar um item escondido não custa nada, e a leitura forçava estilo no boot)
+  $$('.hero__kicker, .hero__title, .hero__text', slide).forEach((e, k) => enter(e, { y: 26, delay: 160 + k * 110, duration: 900 }));
   const pins = $('.pins', slide);
-  if (pins && getComputedStyle(pins).display !== 'none') enter(pins, { x: 28, y: 0, delay: 360, duration: 800 });
+  if (pins) enter(pins, { x: 28, y: 0, delay: 360, duration: 800 });
 }
 
 function heroDeactivate(slide) {

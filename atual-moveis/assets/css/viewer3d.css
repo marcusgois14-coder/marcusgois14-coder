@@ -871,6 +871,23 @@
   }
 }
 
+/* ---------- Toque: alvos maiores (cores 40 px, vistas 38 px) ---------- */
+@media (pointer: coarse) {
+  .v3d--sheet .v3d__swatch {
+    width: 40px;
+    height: 40px;
+  }
+
+  .v3d--sheet .v3d__btn,
+  .v3d--sheet .v3d__seg {
+    height: 46px;
+  }
+
+  .v3d--sheet .v3d__seg button {
+    height: 38px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .v3d *,
   .v3d *::before,

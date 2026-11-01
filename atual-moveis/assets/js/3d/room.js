@@ -162,6 +162,19 @@ function sweep(lim, step) {
   if (lim > 1e-6) out.push(lim, -lim);
   return out;
 }
+// O navegador abre WebGL 2 (three.js r170)? Testado uma vez por página.
+let gl2Ok = null;
+function hasWebGL2() {
+  if (gl2Ok !== null) return gl2Ok;
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    gl2Ok = !!gl;
+  } catch {
+    gl2Ok = false;
+  }
+  return gl2Ok;
+}
 const readJSON = (key) => {
   try {
     const raw = localStorage.getItem(key);
@@ -556,17 +569,32 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
 
   const cam = () => (st.view === 'plan' ? camP : cam3);
 
+  // Sem WebGL: cartão com o aviso e o caminho de volta; a lista de produtos fica desativada
+  function failNoGL() {
+    failed = true;
+    root.classList.add('is-failed');
+    loadingEl.classList.add('is-error');
+    loadingEl.setAttribute('role', 'alert');
+    loadingEl.innerHTML = `<div class="rm-fail">
+        <span class="rm-fail__icon">${I.warn}</span>
+        <h2 class="rm-fail__title">Não foi possível abrir o 3D</h2>
+        <p class="rm-fail__text">Este navegador não conseguiu mostrar o ambiente em 3D. Tente atualizar a página ou abrir em outro navegador.</p>
+        <button type="button" class="rm-btn rm-btn--ghost" data-rm-close>Voltar</button>
+      </div>`;
+    emptyEl.hidden = true;
+    renderList();
+    resolveReady();
+  }
+
   function initScene() {
     if (!alive) return;
+    // testa antes de criar o renderer: assim o three.js não enche o console de erros
+    if (!hasWebGL2()) return failNoGL();
     try {
       renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     } catch (err) {
       console.warn('[ambiente] WebGL indisponível', err);
-      failed = true;
-      loadingEl.innerHTML = 'Seu navegador não conseguiu abrir o 3D. Tente atualizar a página ou usar outro navegador.';
-      loadingEl.classList.add('is-error');
-      resolveReady();
-      return;
+      return failNoGL();
     }
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -971,7 +999,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     const { w: W, d: D } = st.room;
     const hw = W / 2 + T + 0.45;
     const hd = D / 2 + T + 0.45;
-    const topI = 40;
+    const topI = 54; // espaço para o aviso de colisão no topo não cobrir a cota da largura
     const botI = !selEl.hidden ? Math.min(ch * 0.4, selEl.offsetHeight + 16) : !hintEl.hidden ? 36 : 10;
     const avail = Math.max(80, ch - topI - botI);
     const k = Math.min(cw / (2 * hw), avail / (2 * hd)); // pixels por metro
@@ -1631,7 +1659,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       ? list
           .map((e) => {
             const n = count[e.p.id] || 0;
-            return `<li class="rm-list__item"><button type="button" class="rm-prod" data-rm-add="${esc(e.p.id)}">
+            return `<li class="rm-list__item"><button type="button" class="rm-prod" data-rm-add="${esc(e.p.id)}"${failed ? ' disabled' : ''}>
             <span class="rm-prod__img">${picture(photoOf(e.p), { alt: '' })}</span>
             <span class="rm-prod__info">
               <span class="rm-prod__name"><span class="visually-hidden">Colocar no ambiente: </span>${esc(e.p.name)}</span>
@@ -1877,7 +1905,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       return;
     }
     clearBtn.classList.add('is-confirm');
-    clearBtn.querySelector('span').textContent = 'Toque de novo para limpar';
+    clearBtn.querySelector('span').textContent = coarse ? 'Toque de novo para limpar' : 'Clique de novo para limpar';
     clearTimeout(clearT);
     clearT = setTimeout(() => {
       if (!alive) return;
@@ -1986,7 +2014,10 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
       return;
     }
     if (!sel || e.altKey || e.ctrlKey || e.metaKey) return;
+    // na lista de produtos as setas rolam a lista e Delete não apaga o item selecionado (R e D continuam)
+    const inList = !!t.closest('.rm-cat');
     const arrows = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+    if (inList && (arrows[e.key] || e.key === 'Delete' || e.key === 'Backspace')) return;
     if (arrows[e.key]) {
       const [rx, fy] = arrows[e.key];
       const [f, r] = viewAxes();
@@ -2199,6 +2230,7 @@ function createRoom({ host, store = null, products = [], categories = [], addPro
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const L = Math.hypot(dx, dy) || 1;
+    if (L < 14) return ''; // cota de poucos pixels (folga mínima até a parede) virava um "H" solto na planta
     const nx = (-dy / L) * 5;
     const ny = (dx / L) * 5;
     let ang = (Math.atan2(dy, dx) * 180) / Math.PI;

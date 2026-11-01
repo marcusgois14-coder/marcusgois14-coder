@@ -600,57 +600,392 @@ function tv(spec, kit) {
 }
 
 /* ---------- decoração e têxteis ---------- */
+// Texto normalizado com espaço nas pontas (para testar palavras do nome do produto)
+const normLabel = (s) => ` ${String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()} `;
+const FABRICS = ['linen', 'cotton', 'velvet', 'fabric', 'boucle', 'suede', 'leather'];
+// Tábua/haste entre dois pontos do plano YZ (x fixo): caixa de seção w (X) x t
+function strut(kit, p0, p1, w, t, material, part) {
+  const dy = p1[1] - p0[1];
+  const dz = p1[2] - p0[2];
+  const b = kit.box(w, Math.hypot(dy, dz), t, material, { r: Math.min(w, t) * 0.25, part });
+  b.position.set(p0[0], (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2);
+  b.rotation.x = Math.atan2(dz, dy);
+  return b;
+}
+// Casca fina de revolução: perfil externo de baixo para cima e o interno de volta (vê-se por dentro)
+function shell(points, t) {
+  const y0 = Math.min(...points.map((p) => p[1]));
+  const inner = points.map(([r, y]) => [Math.max(0.0001, r - t), Math.max(y0, y - t * 0.6)]).reverse();
+  return [...points, ...inner];
+}
+// Contorno 2D centrado com caixa exata W x H: elipse (redondo/oval) ou orgânico (deterministico pela semente)
+function outline(THREE, W, H, kind, r) {
+  const s = new THREE.Shape();
+  if (kind !== 'organic') {
+    s.absellipse(0, 0, W / 2, H / 2, 0, Math.PI * 2, false, 0);
+    return s;
+  }
+  const a1 = 0.06 + r() * 0.05;
+  const a2 = 0.04 + r() * 0.04;
+  const p1 = r() * 6.28;
+  const p2 = r() * 6.28;
+  const pts = [];
+  for (let i = 0; i < 72; i++) {
+    const t = (i / 72) * Math.PI * 2;
+    const k = 1 + a1 * Math.sin(2 * t + p1) + a2 * Math.sin(3 * t + p2);
+    pts.push([Math.cos(t) * k, Math.sin(t) * k]);
+  }
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  pts.forEach(([x, y], i) => {
+    const X = ((x - x0) / (x1 - x0) - 0.5) * W;
+    const Y = ((y - y0) / (y1 - y0) - 0.5) * H;
+    if (i) s.lineTo(X, Y);
+    else s.moveTo(X, Y);
+  });
+  s.closePath();
+  return s;
+}
+
+// Espelho / quadro: moldura e superfície recuada (espelho cromado ou tela com manchas de cor)
+function framed(spec, kit, c) {
+  const { st, W, H, D, m, r } = c;
+  const THREE = kit.THREE;
+  const g = kit.group(`generic-${st.decor}`);
+  const isMirror = st.decor === 'mirror';
+  const lab = normLabel(spec.label);
+  const frameMat = st.woodLook || / madeira /.test(lab) ? c.wood : m.metal(c.C.main, { finish: / (dourad|ouro|latao|bronze|cobre) /.test(lab) ? 'brushed' : 'painted' });
+  const surface = isMirror ? m.metal('#e4ebee', { finish: 'chrome' }) : m.fabric('#efe9df', { kind: 'cotton' });
+  const shaped = st.shape === 'round' || st.shape === 'oval' || st.organic;
+  // espelho de chão com profundidade para encostar: o painel inclina contra a parede
+  const lean = isMirror && st.floorMirror && !shaped && D >= 0.15;
+  const t = lean ? 0.03 : D;
+  // inclinação que cabe exatamente em H x D (topo encostado atrás, base na frente): painel de comprimento PH
+  const ang = lean ? Math.atan2(D - t, H) : 0;
+  const PH = lean ? (H - t * Math.sin(ang)) / Math.cos(ang) : H;
+  const fw = Math.min(0.05, Math.max(0.012, Math.min(W, PH) * (isMirror ? 0.05 : 0.07)));
+  // superfície recuada 30% da espessura (não passa da frente nem do fundo da moldura)
+  const inner = (w, h) => kit.place(kit.box(w, h, t * 0.7, surface, { part: 'detail' }), { y: 0, z: -t * 0.15 });
+  const panel = kit.group('painel');
+  if (shaped) {
+    // moldura em anel (furo do tamanho do espelho) e espelho recuado
+    const kind = st.organic ? 'organic' : 'ellipse';
+    const rs = kit.rng(`${spec.seed}:contorno`);
+    const outer = outline(THREE, W, PH, kind, rs);
+    const hole = outline(THREE, Math.max(0.02, W - 2 * fw), Math.max(0.02, PH - 2 * fw), kind, kit.rng(`${spec.seed}:contorno`));
+    const ring = new THREE.Shape(outer.getPoints(64));
+    ring.holes.push(new THREE.Path(hole.getPoints(64)));
+    panel.add(kit.extrude(ring, t, frameMat, { curveSegments: 48, part: 'main' }));
+    panel.add(kit.place(kit.extrude(new THREE.Shape(hole.getPoints(64)), t * 0.7, surface, { curveSegments: 48, part: 'detail' }), { z: -t * 0.15 }));
+  } else {
+    const rb = Math.min(0.004, fw * 0.3);
+    panel.add(kit.place(kit.box(W, fw, t, frameMat, { r: rb, part: 'main' }), { y: PH / 2 - fw / 2 }));
+    panel.add(kit.place(kit.box(W, fw, t, frameMat, { r: rb, part: 'main' }), { y: -PH / 2 + fw / 2 }));
+    panel.add(kit.place(kit.box(fw, PH - 2 * fw + 0.002, t, frameMat, { r: rb, part: 'main' }), { x: -W / 2 + fw / 2 }));
+    panel.add(kit.place(kit.box(fw, PH - 2 * fw + 0.002, t, frameMat, { r: rb, part: 'main' }), { x: W / 2 - fw / 2 }));
+    panel.add(inner(W - 2 * fw + 0.002, PH - 2 * fw + 0.002));
+    if (!isMirror) {
+      // quadro: manchas de cor abstratas na tela (dentro da moldura, sem passar da frente)
+      const cols = ['#c9692b', '#1f5a4a', '#d8cba0', '#2f4a5c', '#b5703a'];
+      const iw = W - 2 * fw;
+      const ih = PH - 2 * fw;
+      for (let i = 0; i < 4; i++) {
+        const bw = iw * (0.2 + r() * 0.3);
+        const bh = ih * (0.15 + r() * 0.35);
+        const x = (r() - 0.5) * (iw - bw);
+        const y = (r() - 0.5) * (ih - bh);
+        panel.add(kit.place(kit.box(bw, bh, 0.0015, m.paint(cols[(i + Math.floor(r() * 5)) % 5]), { part: 'detail' }), { x, y, z: t * 0.2 - 0.001 + i * 0.0002 }));
+      }
+    }
+  }
+  if (lean) {
+    panel.rotation.x = -ang;
+    panel.position.set(0, H / 2, 0);
+    g.add(panel);
+    // pezinho de apoio: do chão (atrás) até as costas do painel
+    const yS = H * 0.45;
+    const zS = (H / 2 - yS) * Math.tan(ang) - t / 2 / Math.cos(ang) - 0.004;
+    g.add(strut(kit, [0, 0.01, -D / 2 + 0.012], [0, yS, zS], 0.03, 0.02, frameMat, 'detail'));
+  } else {
+    panel.position.y = H / 2;
+    g.add(panel);
+  }
+  return g;
+}
+
+// Luminárias: de chão, abajur, pendente, arandela e de arco
+function lamp(spec, kit, c) {
+  const { st, W, H, D, m } = c;
+  const g = kit.group(`generic-lamp-${st.lampType || 'floor'}`);
+  const lab = normLabel(spec.label);
+  const main = c.C.main;
+  // a cor do produto vai na cúpula quando ela é de tecido ("Cúpula de Linho Bege"); senão vai na estrutura
+  const shadeIsMain = / cupula /.test(lab) || FABRICS.includes(spec.material);
+  const frameHex = shadeIsMain ? (/ (dourad|ouro|latao) /.test(lab) ? '#c9a24a' : '#2b2b2b') : main;
+  const frame = m.metal(frameHex, { finish: kit.luminance(frameHex) > 0.35 ? 'brushed' : 'painted' });
+  const shadeFab = m.fabric(shadeIsMain ? main : '#f1ebe0', { kind: 'linen' });
+  const dome = shadeIsMain ? shadeFab : m.metal(main, { finish: 'painted' });
+  const glass = / (cristal|vidro) /.test(lab);
+  const glow = m.flat('#fff6e0', { emissive: '#ffe9b8' });
+  const type = st.lampType || 'floor';
+  if (type === 'pendant') {
+    // canopla no teto, fio e cúpula (domo industrial, de vidro ou tambor de tecido); a borda da cúpula em y = 0
+    const R = Math.min(W, D) / 2;
+    const sh = Math.min(H * 0.6, R * (shadeIsMain ? 1.1 : 0.95));
+    const prof = shadeIsMain
+      ? [[R, 0], [R, sh * 0.02], [R * 0.98, sh], [R * 0.95, sh]]
+      : [[R, 0], [R * 0.96, sh * 0.06], [R * 0.72, sh * 0.42], [R * 0.36, sh * 0.78], [Math.min(0.03, R * 0.3), sh * 0.92], [Math.min(0.025, R * 0.25), sh]];
+    const shadeMat = glass ? m.glass({ tint: '#f4f1ea', opacity: 0.45 }) : dome;
+    g.add(kit.lathe(shell(prof, Math.min(0.004, R * 0.05)), shadeMat, { seg: 40, part: 'main' }));
+    if (shadeIsMain) g.add(kit.place(kit.cylinder(0.02, 0.02, 0.02, frame, { seg: 16, part: 'metal' }), { y: sh * 0.8 }));
+    g.add(kit.place(kit.sphere(Math.min(0.035, R * 0.35), glow, { seg: 16 }), { y: sh * 0.35 }));
+    const capR = Math.min(0.06, R * 0.7);
+    g.add(kit.place(kit.cylinder(capR * 0.9, capR, 0.02, frame, { seg: 24, part: 'metal' }), { y: H - 0.01 }));
+    const cord = H - 0.02 - sh;
+    if (cord > 0.005) g.add(kit.place(kit.cylinder(0.003, 0.003, cord, m.flat('#1a1a1a'), { seg: 8, part: 'detail' }), { y: sh + cord / 2 }));
+    return g;
+  }
+  if (type === 'arc') {
+    // base pesada numa ponta, arco que sobe e passa por cima, cúpula pendurada na outra ponta
+    const baseR = D / 2;
+    const R = Math.min(D / 2, Math.max(0.1, H * 0.11));
+    const xb = -W / 2 + baseR;
+    const xs = W / 2 - R;
+    const tr = 0.012;
+    g.add(kit.place(kit.lathe([[0.0001, 0], [baseR, 0], [baseR, 0.03], [baseR * 0.85, 0.05], [0.03, 0.06], [0.0001, 0.06]], m.marble('#e9e6e0'), { seg: 40, part: 'detail' }), { x: xb }));
+    const y1 = H * 0.5;
+    const top = H - tr;
+    const pts = [];
+    for (let i = 0; i <= 6; i++) pts.push([xb, 0.06 + ((y1 - 0.06) * i) / 6, 0]);
+    for (let i = 1; i <= 24; i++) {
+      const a = Math.PI - (i / 24) * Math.PI;
+      pts.push([(xb + xs) / 2 + Math.cos(a) * (xs - xb) / 2, y1 + Math.sin(a) * (top - y1), 0]);
+    }
+    const sh = Math.min(R * 1.0, y1 * 0.5);
+    pts.push([xs, y1 - 0.03, 0]);
+    g.add(kit.tube(pts, tr, frame, { seg: 96, radial: 10, part: 'metal' }));
+    const prof = [[R, 0], [R * 0.95, sh * 0.08], [R * 0.7, sh * 0.5], [R * 0.3, sh * 0.85], [0.02, sh]];
+    const shade = kit.lathe(shell(prof, 0.003), shadeIsMain ? shadeFab : frame, { seg: 40, part: 'main' });
+    g.add(kit.place(shade, { x: xs, y: y1 - 0.03 - sh }));
+    g.add(kit.place(kit.sphere(0.03, glow, { seg: 14 }), { x: xs, y: y1 - 0.03 - sh * 0.6 }));
+    return g;
+  }
+  if (type === 'wall') {
+    // arandela: espelho de fixação na parede (atrás), braço e cúpula na frente
+    const R = Math.min(W / 2, (D - 0.03) / 2);
+    const sh = Math.min(H * 0.45, R * 1.4);
+    const plateH = Math.min(H * 0.55, 0.16);
+    g.add(kit.place(kit.box(Math.min(W * 0.6, 0.1), plateH, 0.015, frame, { r: 0.004, part: 'metal' }), { y: plateH / 2, z: -D / 2 + 0.0075 }));
+    const zc = D / 2 - R;
+    g.add(kit.tube([[0, plateH * 0.6, -D / 2 + 0.015], [0, plateH * 0.7, (zc - D / 2) / 2], [0, H - sh * 0.6, zc]], 0.008, frame, { seg: 24, radial: 8, part: 'metal' }));
+    const prof = [[R * 0.75, H - sh], [R * 0.8, H - sh + 0.002], [R, H - 0.002], [R * 0.98, H]];
+    g.add(kit.place(kit.lathe(shell(prof, 0.003), shadeIsMain || !glass ? shadeFab : m.glass({ tint: '#f4f1ea', opacity: 0.5 }), { seg: 36, part: 'main' }), { z: zc }));
+    g.add(kit.place(kit.sphere(Math.min(0.025, R * 0.4), glow, { seg: 12 }), { y: H - sh * 0.55, z: zc }));
+    return g;
+  }
+  const R = Math.min(W, D) / 2;
+  if (type === 'table') {
+    // abajur: corpo torneado (cerâmica ou metal) e cúpula tronco-cônica
+    const sh = Math.min(H * 0.45, R * 1.25);
+    const bodyH = H - sh * 0.75;
+    const rb = R * 0.5;
+    const bodyMat = shadeIsMain ? m.paint(/ (dourad|ouro) /.test(lab) ? '#c9a24a' : '#efe9df', { gloss: 0.85 }) : frame;
+    g.add(kit.lathe([[0.0001, 0], [rb * 0.7, 0], [rb * 0.75, 0.01], [rb, bodyH * 0.35], [rb * 0.92, bodyH * 0.6], [rb * 0.45, bodyH * 0.82], [rb * 0.3, bodyH * 0.9], [0.012, bodyH * 0.92], [0.012, bodyH], [0.0001, bodyH]], bodyMat, { seg: 36, part: 'main' }));
+    g.add(kit.lathe(shell([[R, H - sh], [R * 0.72, H]], 0.003), shadeFab, { seg: 40, part: 'accent' }));
+    g.add(kit.place(kit.sphere(0.025, glow, { seg: 12 }), { y: H - sh * 0.5 }));
+    return g;
+  }
+  // de chão: base, haste e cúpula de tecido
+  const baseR = R * 0.55;
+  const shadeH = Math.min(H * 0.32, R * 1.2);
+  const stemH = H - shadeH * 0.55 - 0.03;
+  g.add(kit.place(kit.cylinder(baseR * 0.95, baseR, 0.03, frame, { seg: 32, part: 'metal' }), { y: 0.015 }));
+  g.add(kit.place(kit.cylinder(0.008, 0.008, stemH, frame, { seg: 12, part: 'metal' }), { y: 0.03 + stemH / 2 }));
+  g.add(kit.lathe(shell([[R, H - shadeH], [R * 0.62, H]], 0.003), shadeFab, { seg: 40, part: 'accent' }));
+  g.add(kit.place(kit.sphere(0.03, glow, { seg: 16 }), { y: H - shadeH * 0.55 }));
+  return g;
+}
+
+// Cortina (duas folhas franzidas num varão) ou persiana (rolô)
+function curtain(spec, kit, c) {
+  const { st, W, H, D, m } = c;
+  const THREE = kit.THREE;
+  const g = kit.group(st.blinds ? 'generic-blinds' : 'generic-curtain');
+  const fab = m.fabric(c.C.main, { kind: FABRICS.includes(spec.material) && spec.material !== 'fabric' ? spec.material : 'linen' });
+  const rodMat = m.metal(c.C.metal || '#2b2b2b', { finish: 'painted' });
+  if (st.blinds) {
+    // persiana rolô: bandô no alto, tela lisa e barra de peso embaixo
+    const head = Math.min(0.08, H * 0.06);
+    g.add(kit.place(kit.box(W, head, D, m.paint('#f2f2f0', { gloss: 0.4 }), { r: Math.min(0.02, head * 0.4), part: 'accent' }), { y: H - head / 2 }));
+    g.add(kit.place(kit.box(W - 0.02, H - head - 0.03, 0.004, fab, { part: 'main' }), { y: (H - head - 0.03) / 2 + 0.03, z: D / 2 - 0.01 }));
+    g.add(kit.place(kit.box(W - 0.02, 0.03, 0.012, rodMat, { r: 0.004, part: 'metal' }), { y: 0.015, z: D / 2 - 0.01 }));
+    return g;
+  }
+  // varão com ponteiras (largura total) e suportes até a parede
+  const fr = Math.min(0.035, D * 0.3, H * 0.03);
+  const rodR = Math.min(0.012, fr * 0.5);
+  const rodY = H - fr;
+  const rod = kit.cylinder(rodR, rodR, W - 2 * fr, rodMat, { seg: 16, part: 'metal' });
+  rod.rotation.z = Math.PI / 2;
+  g.add(kit.place(rod, { y: rodY }));
+  for (const sx of [-1, 1]) {
+    g.add(kit.place(kit.sphere(fr, rodMat, { seg: 16, part: 'metal' }), { x: sx * (W / 2 - fr), y: rodY }));
+    g.add(kit.place(kit.box(0.015, 0.015, D / 2, rodMat, { part: 'metal' }), { x: sx * (W / 2 - fr * 3), y: rodY, z: -D / 4 }));
+  }
+  // folhas franzidas: faixa ondulada extrudada para cima, do chão até logo abaixo do varão
+  const amp = Math.max(0.005, D / 2 - 0.0005);
+  const lam = Math.max(0.08, amp * 2.6);
+  const thick = 0.004;
+  const fh = rodY - rodR - 0.01;
+  const leaf = (x0, x1) => {
+    const n = Math.max(8, Math.round(((x1 - x0) / lam) * 10));
+    const top = [];
+    for (let i = 0; i <= n; i++) {
+      const x = x0 + ((x1 - x0) * i) / n;
+      top.push([x, Math.sin(((x - x0) / lam) * Math.PI * 2) * (amp - thick / 2)]);
+    }
+    const s = new THREE.Shape();
+    top.forEach(([x, z], i) => (i ? s.lineTo(x, -z - thick / 2) : s.moveTo(x, -z - thick / 2)));
+    for (let i = top.length - 1; i >= 0; i--) s.lineTo(top[i][0], -top[i][1] + thick / 2);
+    s.closePath();
+    const me = kit.extrude(s, fh, fab, { curveSegments: 1, part: 'main' });
+    me.rotation.x = -Math.PI / 2;
+    me.position.y = fh / 2;
+    return me;
+  };
+  const gap = Math.min(0.04, W * 0.02);
+  const span = W - 4 * fr;
+  g.add(leaf(-span / 2, -gap / 2));
+  g.add(leaf(gap / 2, span / 2));
+  // argolas no varão
+  const ringMat = rodMat;
+  const nr = Math.max(4, Math.round(span / 0.12));
+  for (let i = 0; i <= nr; i++) {
+    const x = -span / 2 + (span * i) / nr;
+    if (Math.abs(x) < gap) continue;
+    const t = new THREE.TorusGeometry(rodR * 1.8, 0.003, 6, 14);
+    g.add(kit.place(kit.mesh(t, ringMat, { part: 'metal', keepUV: true }), { x, y: rodY, ry: Math.PI / 2 }));
+  }
+  return g;
+}
+
+// Escada: decorativa (encostada na parede) ou doméstica de abrir (alumínio)
+function ladder(spec, kit, c) {
+  const { st, W, H, D, m } = c;
+  const g = kit.group('generic-ladder');
+  if (st.ladderType === 'step') {
+    const al = m.metal(st.woodLook ? c.C.main : '#c9cdd1', { finish: 'brushed' });
+    const rub = m.rubber('#1b1b1b');
+    const rw = 0.03;
+    const rt = 0.022;
+    const topT = 0.03;
+    const zTop = -D / 2 + D * 0.38;
+    const yTop = H - topT;
+    const n = Math.max(2, Math.min(8, st.steps || 4));
+    for (const sx of [-1, 1]) {
+      const x = sx * (W / 2 - rw / 2);
+      g.add(strut(kit, [x, 0, D / 2 - rt / 2], [x, yTop, zTop + 0.04], rw, rt, al, 'main'));
+      g.add(strut(kit, [sx * (W / 2 - rw / 2 - 0.02), 0, -D / 2 + rt / 2], [sx * (W / 2 - rw / 2 - 0.02), yTop - 0.02, zTop - 0.03], rw * 0.8, rt, al, 'main'));
+      g.add(kit.place(kit.box(rw + 0.004, 0.02, 0.04, rub, { r: 0.004 }), { x, y: 0.01, z: D / 2 - 0.02 }));
+    }
+    // degraus (largos, ao longo dos montantes da frente) e plataforma no topo
+    for (let i = 1; i < n; i++) {
+      const f = i / n;
+      const y = yTop * f;
+      const z = D / 2 - rt / 2 + (zTop + 0.04 - (D / 2 - rt / 2)) * f;
+      g.add(kit.place(kit.box(W - 2 * rw, 0.02, 0.09, al, { r: 0.003, part: 'main' }), { y, z: z - 0.03 }));
+    }
+    g.add(kit.place(kit.box(W - 0.01, topT, 0.24, m.plastic('#2a2b2d', { gloss: 0.3 }), { r: 0.006, part: 'accent' }), { y: H - topT / 2, z: zTop }));
+    return g;
+  }
+  // escada decorativa encostada: dois montantes inclinados e travessas
+  const wood = st.woodLook || spec.material === 'wood' ? m.wood(st.woodLook ? c.C.main : c.C.wood || '#b08a5a', { grain: st.rustic ? 'rustic' : 'oak' }) : c.body;
+  const rw = Math.min(0.05, W * 0.1);
+  const rt = Math.min(0.03, D * 0.2);
+  const ang = Math.atan2(D - rt, H);
+  const L = (H - rt * Math.sin(ang)) / Math.cos(ang);
+  // eixo dos montantes: centrado na caixa (a seção rt fecha a altura e a profundidade exatas)
+  const y0 = (rt * Math.sin(ang)) / 2;
+  const p0z = (L * Math.sin(ang)) / 2;
+  const p1 = [0, y0 + L * Math.cos(ang), p0z - L * Math.sin(ang)];
+  for (const sx of [-1, 1]) g.add(strut(kit, [sx * (W / 2 - rw / 2), y0, p0z], [sx * (W / 2 - rw / 2), p1[1], p1[2]], rw, rt, wood, 'main'));
+  const n = Math.max(3, Math.min(10, st.steps || Math.round(H / 0.32)));
+  for (let i = 1; i <= n; i++) {
+    const f = (i - 0.35) / n;
+    const y = y0 + (p1[1] - y0) * f;
+    const z = p0z + (p1[2] - p0z) * f;
+    const rung = kit.cylinder(0.014, 0.014, W - 2 * rw + 0.004, wood, { seg: 14, part: 'main', alongHeight: true });
+    rung.rotation.z = Math.PI / 2;
+    g.add(kit.place(rung, { y, z }));
+  }
+  return g;
+}
+
+// Têxteis: almofada em pé, peça dobrada (edredom, manta, toalha) ou pilha genérica
+function textile(spec, kit, c) {
+  const { st, W, H, D, m } = c;
+  const g = kit.group(`generic-${st.textileKind || 'textile'}`);
+  const main = c.C.main;
+  const fab = m.upholstery(main, FABRICS.includes(spec.material) ? spec.material : 'cotton');
+  if (st.textileKind === 'cushion' || (!st.textileKind && H < 0.2 && W < 0.75 && D < 0.75)) {
+    // almofada decorativa em pé (espessura em Z) ou deitada quando é mais baixa que larga
+    if (H > D) {
+      const cu = kit.cushion(W, D, H, fab, { puff: 0.42, r: Math.min(W, H) * 0.12 });
+      cu.rotation.x = Math.PI / 2;
+      g.add(kit.place(cu, { y: H / 2 }));
+    } else g.add(kit.place(kit.cushion(W, H, D, fab, { puff: 0.38, r: H * 0.45 }), { y: H / 2 }));
+    return g;
+  }
+  // dobrado: camadas com a dobra arredondada na frente e leve variação de tom
+  const n = Math.max(2, Math.min(5, Math.round(H / 0.05)));
+  const lh = H / n;
+  for (let i = 0; i < n; i++) {
+    const tone = i % 2 ? kit.shade(main, -0.07) : main;
+    const off = (i % 2 ? 1 : -1) * Math.min(0.006, W * 0.02);
+    const layer = kit.cushion(W - 0.012, lh, D - 0.006, m.fabric(tone, { kind: 'cotton' }), { puff: 0.1, r: lh * 0.48 });
+    g.add(kit.place(layer, { x: off, y: lh * (i + 0.5), z: (i % 2 ? -1 : 1) * 0.003 }));
+  }
+  return g;
+}
+
 function decor(spec, kit) {
   const c = ctx(spec, kit);
   const { st, W, H, D, m } = c;
+  if (st.textile) return textile(spec, kit, c);
+  if (st.decor === 'lamp') return lamp(spec, kit, c);
+  if (st.decor === 'mirror' || st.decor === 'frame') return framed(spec, kit, c);
+  if (st.decor === 'curtain') return curtain(spec, kit, c);
+  if (st.decor === 'ladder') return ladder(spec, kit, c);
   const g = kit.group(`generic-${st.decor || st.family}`);
   const main = c.C.main;
-  if (st.textile) {
-    if (H < 0.2 && W < 0.75 && D < 0.75) g.add(kit.place(kit.cushion(W, H, D, m.upholstery(main, spec.material), { puff: 0.38, r: H * 0.45 }), { y: H / 2 }));
-    else {
-      const n = 3;
-      for (let i = 0; i < n; i++) g.add(kit.place(kit.cushion(W - i * 0.01, H / n, D - i * 0.01, m.fabric(i === 1 ? kit.shade(main, -0.08) : main, { kind: 'cotton' }), { puff: 0.15, r: H / n * 0.45 }), { y: (H / n) * (i + 0.5) }));
-    }
-    return g;
-  }
+  const lab = normLabel(spec.label);
   switch (st.decor) {
     case 'rug': {
-      const f = m.fabric(main, { kind: 'linen' });
-      g.add(kit.place(kit.box(W, H, D, m.fabric(kit.shade(main, -0.25), { kind: 'linen' }), { r: Math.min(H / 2, 0.004) }), { y: H / 2 }));
+      // pelo alto (shaggy/felpudo) usa a trama bouclé; redondo vira disco
+      const kind = / (shaggy|felpudo|peludo|pelo alto) /.test(lab) ? 'boucle' : 'linen';
+      const f = m.fabric(main, { kind });
+      const edge = m.fabric(kit.shade(main, -0.25), { kind });
+      if (st.shape === 'round' && Math.abs(W - D) < 0.02) {
+        g.add(kit.place(kit.cylinder(W / 2, W / 2, H, edge, { seg: 64 }), { y: H / 2 }));
+        g.add(kit.place(kit.cylinder(W / 2 - 0.05, W / 2 - 0.05, H * 0.1 + 0.0004, f, { seg: 64 }), { y: H - (H * 0.1 + 0.0004) / 2 + 0.0002 }));
+        break;
+      }
+      g.add(kit.place(kit.box(W, H, D, edge, { r: Math.min(H / 2, 0.004) }), { y: H / 2 }));
       g.add(kit.place(kit.box(W - 0.12, H * 0.1 + 0.0004, D - 0.12, f), { y: H + 0.0002 - (H * 0.1 + 0.0004) / 2 + 0.0001 }));
       break;
     }
-    case 'lamp': {
-      const R = Math.min(W, D) / 2;
-      const baseR = R * 0.55;
-      const shadeH = Math.min(H * 0.32, R * 1.2);
-      const stemH = H - shadeH * 0.55 - 0.03;
-      g.add(kit.place(kit.cylinder(baseR * 0.95, baseR, 0.03, c.metal, { seg: 32 }), { y: 0.015 }));
-      g.add(kit.place(kit.cylinder(0.008, 0.008, stemH, c.metal, { seg: 12 }), { y: 0.03 + stemH / 2 }));
-      // cúpula de parede fina: lado de fora de baixo para cima, depois o de dentro
-      const sh = kit.lathe([[R, H - shadeH], [R * 0.62, H], [R * 0.6, H], [R * 0.98, H - shadeH]], m.fabric('#f1ebe0', { kind: 'linen' }), { seg: 40 });
-      g.add(sh);
-      const bulb = kit.sphere(0.03, m.flat('#fff6e0', { emissive: '#ffe9b8' }), { seg: 16 });
-      g.add(kit.place(bulb, { y: H - shadeH * 0.55 }));
-      break;
-    }
-    case 'mirror':
-    case 'frame': {
-      const fw = Math.min(0.05, Math.min(W, H) * 0.08);
-      const fm = st.woodLook ? c.wood : m.metal(main, { finish: 'painted' });
-      g.add(kit.place(kit.box(W, H, D, fm, { r: Math.min(0.006, D / 3) }), { y: H / 2 }));
-      const inner = st.decor === 'mirror' ? m.metal('#e4ebee', { finish: 'chrome' }) : m.fabric('#efe9df', { kind: 'cotton' });
-      g.add(kit.place(kit.box(W - 2 * fw, H - 2 * fw, 0.004, inner, { part: 'detail' }), { y: H / 2, z: D / 2 - 0.0015 }));
-      if (st.decor === 'frame') {
-        const cols = ['#c9692b', '#1f5a4a', '#d8cba0'];
-        cols.forEach((col, i) => g.add(kit.place(kit.box((W - 2 * fw) * 0.3, (H - 2 * fw) * (0.25 + i * 0.12), 0.002, m.paint(col), { part: 'detail' }), { x: (i - 1) * (W - 2 * fw) * 0.22, y: H / 2 - i * 0.03, z: D / 2 + 0.0008 })));
-      }
-      break;
-    }
     case 'vase': {
-      const R = Math.min(W, D) / 2;
-      const prof = [[0.0001, 0], [R * 0.55, 0], [R * 0.85, H * 0.15], [R, H * 0.42], [R * 0.82, H * 0.7], [R * 0.42, H * 0.86], [R * 0.4, H * 0.95], [R * 0.5, H], [R * 0.44, H], [0.0001, H * 0.9]];
-      g.add(kit.lathe(prof, m.plastic(main, { gloss: 0.8 }), { seg: 40 }));
+      // cerâmica brilhante; redondo quando largura ≈ profundidade, senão vaso retangular de cantos macios
+      const mt = m.paint(main, { gloss: 0.85 });
+      if (Math.abs(W - D) <= Math.max(W, D) * 0.03) {
+        const R = Math.max(W, D) / 2;
+        const prof = [[0.0001, 0], [R * 0.55, 0], [R * 0.85, H * 0.15], [R, H * 0.42], [R * 0.82, H * 0.7], [R * 0.42, H * 0.86], [R * 0.4, H * 0.95], [R * 0.5, H], [R * 0.44, H], [0.0001, H * 0.9]];
+        g.add(kit.lathe(prof, mt, { seg: 40, part: 'main' }));
+      } else {
+        g.add(kit.place(kit.box(W, H, D, mt, { r: Math.min(W, D) * 0.2, seg: 4, part: 'main' }), { y: H / 2 }));
+        g.add(kit.place(kit.box(W * 0.7, 0.004, D * 0.6, m.flat('#1d1a17', { roughness: 0.9 }), { r: 0.001, part: 'detail' }), { y: H - 0.0015 }));
+      }
       break;
     }
     default: {
