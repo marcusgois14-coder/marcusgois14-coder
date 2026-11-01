@@ -490,14 +490,18 @@ async function loadStore(slug, { push = true, silent = false } = {}) {
   } else if (silent) route({ keepScroll: true });
 }
 
+// Endereços antigos de lojas que mudaram de slug continuam funcionando (e a barra passa a mostrar o novo)
+const SLUG_ALIASES = { 'ponte-nova': 'atual' };
+
 function pickInitialStore() {
   const path = /^\/loja\/([^/?#]+)/.exec(location.pathname);
   const qs = new URLSearchParams(location.search).get('loja');
   const saved = storage.get('atual:store', null);
   const has = (s) => s && S.stores.some((x) => x.slug === s);
-  if (has(path?.[1])) return { slug: path[1], explicit: true };
-  if (has(qs)) return { slug: qs, explicit: true };
-  if (has(saved)) return { slug: saved, explicit: false };
+  const alias = (s) => (s && !has(s) && has(SLUG_ALIASES[s]) ? SLUG_ALIASES[s] : s);
+  if (has(alias(path?.[1]))) return { slug: alias(path[1]), explicit: true };
+  if (has(alias(qs))) return { slug: alias(qs), explicit: true };
+  if (has(alias(saved))) return { slug: alias(saved), explicit: false };
   if (S.loc) {
     const near = storesForLocation().find((s) => s.distance <= Number(s.delivery_radius_km));
     if (near) return { slug: near.slug, explicit: false };
@@ -546,8 +550,9 @@ async function boot() {
     if (!S.stores.length) throw new Error('STORE_NOT_FOUND');
     const pick = pickInitialStore();
     await loadStore(pick.slug, { push: false });
-    // URL canônica da loja (mantém filtros e produto)
-    if (!location.pathname.startsWith('/loja/') && !location.pathname.startsWith('/pedido/')) {
+    // URL canônica da loja (mantém filtros e produto); slug antigo ou desconhecido vira o da loja aberta
+    const pathSlug = /^\/loja\/([^/?#]+)/.exec(location.pathname)?.[1];
+    if ((!location.pathname.startsWith('/loja/') && !location.pathname.startsWith('/pedido/')) || (pathSlug && pathSlug !== S.store.slug)) {
       const params = new URLSearchParams(location.search);
       params.delete('loja');
       history.replaceState({}, '', `/loja/${S.store.slug}${params.toString() ? `?${params}` : ''}${location.hash}`);

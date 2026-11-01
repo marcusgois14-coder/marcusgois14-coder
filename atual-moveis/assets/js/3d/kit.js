@@ -1249,7 +1249,8 @@ export function lathe(points, material, { seg = 32, part } = {}) {
 }
 // Tubo ao longo de pontos [[x,y,z],...] ou de uma THREE.Curve
 export function tube(path, radius, material, { seg = 48, radial = 12, closed = false, part, smooth = true } = {}) {
-  const curve = path.isCurve
+  // three.js r170 não marca as curvas com isCurve: reconhece qualquer objeto com getPoint
+  const curve = path.isCurve || typeof path.getPoint === 'function'
     ? path
     : smooth
       ? new THREE.CatmullRomCurve3(path.map((p) => new THREE.Vector3(...p)), closed, 'catmullrom', 0.2)

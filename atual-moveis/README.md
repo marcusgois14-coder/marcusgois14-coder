@@ -64,6 +64,50 @@ Em `assets/css/style.css`, no topo:
 --brand-orange: #f28125;
 ```
 
+## 3D automático dos produtos
+
+Todo produto cadastrado em qualquer loja ganha um modelo 3D na hora, sem nenhum passo manual. O
+modelo é montado no navegador (Three.js) a partir dos dados do próprio produto:
+
+- **Categoria**: diz o tipo (sofá, cama, guarda-roupa, geladeira, coifa, tapete…). Categoria nova
+  também funciona: se o nome dela não for reconhecido, vale o nome do produto; se nada for
+  reconhecido, sai um móvel neutro com as medidas do produto.
+- **Medidas**: largura, altura e profundidade (cm). Sem medidas, usa as do nome ("138x188",
+  "210 cm", `55"`, "2,00 x 2,50 m") ou um padrão do tipo. Medida digitada em mm ou em metros é corrigida.
+- **Nome e especificações**: detalhes como "3 lugares", "6 portas 4 gavetas", "pés palito",
+  "capitonê", "redondo", "4 bocas", "8 serviços", "com espelho".
+- **Cores**: a cor de cada variação (`#hex` ou gradiente) ou a cor escrita no nome ("Veludo Verde",
+  "Freijó e Off White"). O cliente troca a cor e o 3D acompanha.
+
+Serviços (garantia, frete, montagem) ficam sem 3D.
+
+Ajustes opcionais, só quando o automático não acertar:
+
+- **Por categoria** (`categories.model_kind`): força o tipo de todos os produtos da categoria. Valores:
+  `sofa`, `armchair`, `chair`, `bed`, `mattress`, `coffee_table`, `side_table`, `dining_table`, `dresser`,
+  `nightstand`, `wardrobe`, `rack`, `shelf`, `desk`, `tv`, `fridge`, `washer`, `stove`,
+  `small_appliance`, `generic` ou `none` (sem 3D).
+- **Por produto** (`products.model3d`): o padrão `{}` é automático. Aceita `kind` (tipo), `style`,
+  `colors` e `material`. Por exemplo, `{"kind": "armchair", "colors": {"main": "mostarda"}, "style": {"legs": "metal"}}`.
+  Com `{"kind": "none"}` o produto fica sem 3D.
+- **Modelo próprio** (`products.model_url`): um arquivo `.glb` enviado pela equipe substitui o
+  gerado. Ele é ajustado às medidas do produto. Se não carregar, a loja volta ao modelo automático.
+
+Onde ver:
+
+- **Galeria 3D**: `/admin/3d.html`, sem login. Mostra o 3D de todos os produtos de cada loja, com a
+  foto ao lado. Em "Simular produto novo", digite nome, categoria (pode ser uma que ainda não existe),
+  medidas e cor para ver o modelo que será criado. Links para conferência automática:
+  `?store=<loja>&sku=<SKU>&view=front|three-quarter|side|top|back&size=<px>` e
+  `?product=<JSON>&category=<nome>`.
+- **Na loja**: "Ver em 3D" na página do produto. No celular, "Ver no seu ambiente" abre a câmera (AR).
+- **Monte seu ambiente**: `/loja/<loja>?ambiente=1` abre o planejador de sala em 3D. Com
+  `&add=<produto>`, ele já começa com aquele produto.
+
+Código: `assets/js/3d/infer.js` (regras: tipo, medidas, cores, estilo), `kit.js` (materiais e
+formas), `models/*.js` (um gerador por grupo de produtos), `stage.js` (luz e câmera), `viewer.js`
+(visualizador da loja) e `room.js` (ambiente).
+
 ## Deploy na SquareCloud
 
 O `squarecloud.app` já está pronto (`MAIN=server.js`, 512 MB, subdomínio `atualmoveis`). Basta compactar o conteúdo da pasta `atual-moveis/` em um `.zip` e enviar, ou usar a CLI da SquareCloud de dentro da pasta.
