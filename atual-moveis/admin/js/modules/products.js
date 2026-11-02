@@ -748,7 +748,8 @@ async function duplicateInStore(productId, userId) {
   const taken = new Set((await q(sb.from('products').select('slug').eq('store_id', p.store_id).like('slug', `${base}%`))).map((r) => r.slug));
   let slug = base;
   for (let n = 2; taken.has(slug); n += 1) slug = `${base}-${n}`;
-  const { id, created_at, updated_at, sold_count, image_url, image2_url, created_by, updated_by, ...rest } = p;
+  // group_id fica de fora: a cópia na mesma loja é outro produto (cada loja tem uma cópia por grupo)
+  const { id, group_id, created_at, updated_at, sold_count, image_url, image2_url, created_by, updated_by, ...rest } = p;
   const copy = await q(
     sb
       .from('products')
