@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <script>try{var t=localStorage.getItem('atual-admin-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+  <meta name="color-scheme" content="light dark">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Galeria de componentes · Painel Atual</title>
+  <link rel="icon" href="/assets/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Urbanist:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/css/admin.css">
+  <style>
+    /* só da galeria (página de desenvolvimento; não vai para o ar) */
+    .g-wrap { max-width: 1240px; margin: 0 auto; padding: 24px 24px 120px; }
+    .g-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+    .g-head img { height: 30px; margin-bottom: 14px; }
+    .g-sec { margin-top: 28px; }
+    .g-sec > h2 { margin-bottom: 12px; }
+    .g-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+    .g-grid--2 { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+    .g-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .g-row + .g-row { margin-top: 10px; }
+    .g-lbl { width: 92px; flex: none; font-size: 12.5px; color: var(--muted); font-weight: 500; }
+    .g-sw { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+    .g-sw div { border-radius: 12px; border: 1px solid var(--line); overflow: hidden; background: var(--surface); }
+    .g-sw span { display: block; height: 44px; }
+    .g-sw small { display: block; padding: 6px 8px; font-size: 11.5px; color: var(--muted); font-family: var(--font-mono); }
+    .g-navy { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-radius: 14px; background: #0c1b26; --focus: var(--focus-inverse); }
+    .g-navy .btn--ghost { color: #fff; }
+    .g-out { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); font: 12px/1.5 var(--font-mono); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; min-height: 40px; }
+    .g-scroll { max-height: 220px; overflow: auto; }
+    @media (max-width: 600px) { .g-wrap { padding: 16px 16px 120px; } .g-grid--2 { grid-template-columns: minmax(0, 1fr); } }
+  </style>
+</head>
+<body>
+  <main id="root" class="g-wrap" data-view>
+    <header class="g-head">
+      <div>
+        <img src="/assets/brand/atual-logo-horizontal.svg" alt="Atual Móveis" class="g-logo">
+        <h1 class="page-title">Galeria de componentes</h1>
+        <p class="page-sub">Página de desenvolvimento do painel (não vai para o ar). Tudo aqui usa admin.css e ui.js de verdade.</p>
+      </div>
+      <div data-theme-seg></div>
+    </header>
+    <div id="gallery"></div>
+  </main>
+
+  <script>
+    // Esta página nunca fala com o Supabase: api.js recebe um cliente falso.
+    window.ATUAL_CONFIG = { supabaseUrl: 'https://galeria.invalid', supabaseKey: 'galeria' };
+    window.supabase = { createClient: () => new Proxy({}, { get: () => () => ({}) }) };
+  </script>
+  <script type="module">
+import * as ui from '/admin/js/ui.js';
+const { html, raw, render, $, $$, icon, badge, statusBadge, paymentBadge, productStatusBadge, money, toast, openModal, confirmDialog, promptDialog, drawer, readForm, showErrors,
+  empty, loading, errorBlock, skeleton, tip, kpiCard, waitKpi, deltaPill, sparkline, areaChart, barChart, table, pager, segmented, avatar, storeMark, ageChip, livePill,
+  pageHeader, art, field, switchField, selectOptions, multiSelect, initUI, getTheme, setTheme, registerStores, ORDER_STATUS } = ui;
+
+const STORES = [
+  ['pn', 'Atual Móveis', 'Ponte Nova', 2], ['tx', 'Atual Móveis', 'Teixeiras', 0], ['vi', 'Ativa Móveis', 'Viçosa', 2], ['ma', 'Atual Móveis', 'Mariana', 1],
+  ['op', 'Atual Móveis', 'Ouro Preto', 1], ['ob', 'Atual Móveis', 'Ouro Branco', 0], ['mh', 'Atual Móveis', 'Manhuaçu', 0], ['mm', 'Atual Móveis', 'Manhumirim', 0, 'paused'],
+  ['ca', 'Atual Móveis', 'Caratinga', 0], ['tm', 'Atual Móveis', 'Timóteo', 0], ['cf', 'Atual Móveis', 'Coronel Fabriciano', 0], ['vr', 'Atual Móveis', 'Visconde do Rio Branco', 1],
+  ['lt', 'Loja Tavares', 'Ponte Nova', 0],
+].map(([id, brand_name, city, pending, state]) => ({ id, brand_name, city, name: `${brand_name} - ${city}`, pending, state }));
+registerStores(STORES);
+
+const storeOptions = () =>
+  STORES.map(
+    (s) =>
+      html`<option value="${s.id}" data-mark="${s.id}" data-hint="${s.brand_name} · ${s.city}/MG" data-keywords="${s.brand_name}" ${
+        s.state === 'paused' ? raw('data-badge="Pedidos pausados" data-badge-tone="neu"') : s.pending ? raw(`data-badge="${s.pending} ${s.pending === 1 ? 'novo' : 'novos'}" data-badge-tone="new"`) : ''
+      }>${s.brand_name === 'Atual Móveis' ? s.city : s.name}</option>`
+  );
+const KINDS = [['sofa', 'Sofá'], ['armchair', 'Poltrona'], ['chair', 'Cadeira'], ['bed', 'Cama'], ['mattress', 'Colchão'], ['wardrobe', 'Guarda-roupa'], ['dresser', 'Cômoda'], ['rack', 'Rack'], ['table', 'Mesa'], ['tv', 'TV'], ['fridge', 'Geladeira'], ['washer', 'Lava e seca'], ['stove', 'Fogão'], ['microwave', 'Micro-ondas']];
+const CATS = [
+  ['Sala de estar', [['sofas', 'Sofás', 48], ['poltronas', 'Poltronas', 12], ['racks', 'Racks e painéis', 21], ['mesas-centro', 'Mesas de centro', 9]]],
+  ['Quarto', [['camas', 'Camas', 16], ['colchoes', 'Colchões', 22], ['guarda-roupas', 'Guarda-roupas', 31], ['comodas', 'Cômodas', 0]]],
+  ['Cozinha', [['geladeiras', 'Geladeiras', 14], ['fogoes', 'Fogões', 11], ['micro', 'Micro-ondas', 7]]],
+  ['Lavanderia', [['lavadoras', 'Lavadoras', 8], ['lava-seca', 'Lava e seca', 5]]],
+];
+
+function sec(title, body, sub = '') {
+  return html`<section class="g-sec"><h2 class="h2">${title}${sub ? html` <span class="muted small" style="font-family:var(--font-ui);font-weight:500">${sub}</span>` : ''}</h2>${body}</section>`;
+}
+const card = (title, body, cls = '') => html`<div class="card ${cls}"><div class="card__head"><h3>${title}</h3></div><div class="card__body">${body}</div></div>`;
+
+const sw = (name) => html`<div><span style="background:var(${name})"></span><small>${name}</small></div>`;
+
+function build() {
+  const out = [];
+  out.push(
+    sec(
+      'Tokens',
+      html`<div class="g-sw">${['--bg', '--surface', '--surface-2', '--surface-3', '--raised', '--line', '--line-strong', '--field-line', '--ink', '--text', '--muted', '--faint', '--accent', '--accent-ink', '--accent-soft', '--highlight', '--select', '--navy', '--ok-bg', '--warn-bg', '--info-bg', '--plum-bg', '--ora-bg', '--bad-bg', '--neu-bg'].map(sw)}</div>`
+    )
+  );
+  out.push(
+    sec(
+      'Tipografia',
+      html`<div class="card"><div class="card__body stack" style="--gap:10px">
+      <div class="h1">Pedidos · h1 Urbanist 28/800</div><div class="h2">Resumo da rede · h2 19/800</div><div class="h3">Precisa de atenção · h3 16.5/700</div>
+      <p>Corpo Inter 14/1.45 — A rede já vendeu <b>R$ 18.420,90</b> hoje em 12 pedidos.</p>
+      <p class="muted small">Pequeno 12.5 muted · há 52 min</p><p><span class="code">AT001238 · AT001239 · 0O</span> · <span class="mono">SKU-SOF-210-VV</span> · <span class="overline">Lojas</span></p>
+    </div></div>`
+    )
+  );
+  out.push(
+    sec(
+      'Botões',
+      html`<div class="card"><div class="card__body">
+      ${[
+        ['Primária', 'btn--primary', 'check', 'Salvar'],
+        ['Secundária', '', 'download', 'Exportar'],
+        ['Escura', 'btn--dark', 'check', 'Aplicar'],
+        ['Fantasma', 'btn--ghost', 'sliders', 'Filtros'],
+        ['Destrutiva', 'btn--danger', 'trash', 'Excluir'],
+        ['Perigo (texto)', 'btn--danger-ghost', 'xCircle', 'Cancelar pedido'],
+      ].map(
+        ([l, c, i, t]) => html`<div class="g-row"><span class="g-lbl">${l}</span><button class="btn ${c}" type="button">${icon(i)} ${t}</button><button class="btn ${c} btn--sm" type="button">${icon(i)} ${t}</button><button class="btn ${c}" type="button" disabled>${icon(i)} ${t}</button><button class="btn ${c} btn--icon" type="button" aria-label="${t}">${icon(i)}</button></div>`
+      )}
+      <div class="g-row"><span class="g-lbl">Tamanhos</span><button class="btn btn--primary btn--lg" type="button">Entrar</button><button class="btn btn--touch" type="button">Toque 44</button><button class="btn btn--primary" type="button">Salvar produto <span class="kbd kbd--on-primary">Ctrl S</span></button><button class="btn" type="button" data-busy>Salvar com espera</button></div>
+      <div class="g-row"><span class="g-lbl">Grupo</span><div class="btn-group"><button class="btn is-active" type="button">Dia</button><button class="btn" type="button">Semana</button><button class="btn" type="button">Mês</button></div><span class="kbd">Ctrl</span><span class="kbd">K</span></div>
+      <div class="g-row"><span class="g-lbl">Na janela</span><div class="modal__foot" style="border-radius:12px;flex:1"><button class="btn" type="button">Voltar</button><button class="btn btn--danger" type="button">Cancelar pedido</button></div></div>
+      <div class="g-row" style="margin-top:14px"><div class="g-navy"><span style="color:#c3ced8;font-size:12.5px">Foco sobre marinho</span><button class="btn btn--ghost" type="button">${icon('sync')} Mudar status</button><button class="btn btn--primary btn--sm" type="button">Salvar</button></div></div>
+    </div></div>`
+    )
+  );
+  out.push(
+    sec(
+      'Campos',
+      html`<div class="card"><div class="card__body"><form class="form-grid" data-fields novalidate>
+      <div class="field col-6"><label for="g-email">E-mail do cliente</label><input class="input" id="g-email" placeholder="nome@email.com"></div>
+      <div class="field col-6"><label for="g-phone">Telefone <span class="opt-tag">opcional</span></label><input class="input" id="g-phone" value="(31) 98842-19"></div>
+      <div class="field col-4"><label for="g-cep">CEP</label><input class="input" id="g-cep" value="35430-00" aria-invalid="true"><span class="error">CEP incompleto. Use 8 números.</span></div>
+      <div class="field col-4"><label for="g-loja">Loja</label><input class="input" id="g-loja" value="Ponte Nova" disabled><span class="hint">Definida pelo seu acesso.</span></div>
+      <div class="field col-4"><label for="g-preco">Preço</label><div class="input-group"><span class="input-group__addon">R$</span><input class="input" id="g-preco" value="3.499,90"></div></div>
+      <div class="field col-12"><label for="g-desc">Descrição</label><textarea class="textarea" id="g-desc" placeholder="Conte o que o cliente precisa saber…"></textarea></div>
+      <div class="col-12 g-row" style="gap:18px">
+        <label class="check"><input type="checkbox"> Não</label><label class="check"><input type="checkbox" checked> Sim</label><label class="check"><input type="checkbox" data-mixed> Parcial</label><label class="check"><input type="checkbox" disabled> Bloqueado</label>
+        <label class="check"><input type="radio" name="g-r"> Opção</label><label class="check"><input type="radio" name="g-r" checked> Escolhida</label>
+        ${switchField({ label: 'Desligado', name: 'sw1' })}${switchField({ label: 'Ligado', name: 'sw2', checked: true, hint: 'Avisa a equipe com som' })}
+      </div>
+    </form></div></div>`
+    )
+  );
+
+  // ---- selects ----
+  out.push(
+    sec(
+      'Select personalizado',
+      html`<div class="g-grid g-grid--2">
+      <div class="card"><div class="card__body"><form class="form-grid" id="sel-form" novalidate>
+        <div class="field col-6"><label for="sel-status">Status</label>
+          <select class="select" id="sel-status" name="status">
+            <option value="">Todos os status</option>
+            ${Object.entries(ORDER_STATUS).map(([k, v], i) => html`<option value="${k}" data-dot="${ui.TONE[v.tone]}" data-meta="${[5, 2, 2, 1, 3, 1][i]}">${v.label}</option>`)}
+          </select></div>
+        <div class="field col-6"><label for="sel-pay">Forma de pagamento</label>
+          <select class="select" id="sel-pay" name="pay" data-prefix="Pagamento">
+            <option value="">Todas</option>
+            ${Object.entries(ui.PAYMENT_METHOD).map(([k, v]) => html`<option value="${k}" data-icon="${ui.PAYMENT_ICON[k]}">${v}</option>`)}
+          </select></div>
+        <div class="field col-12"><label for="sel-cat">Categoria</label>
+          <select class="select" id="sel-cat" name="category_id" required data-search-placeholder="Buscar categoria…">
+            <option value="">Escolha a categoria</option>
+            ${CATS.map(([g, kids]) => html`<optgroup label="${g}" data-count="${kids.reduce((a, k) => a + k[2], 0)}">${kids.map(([v, l, n]) => html`<option value="${v}" data-hint="${g} › ${l} · ${n} produtos" data-meta="${n}">${l}</option>`)}</optgroup>`)}
+          </select><span class="hint">Categorias valem para a rede toda.</span></div>
+        <div class="field col-6"><label for="sel-store">Loja</label><select class="select" id="sel-store" name="store">${storeOptions()}</select></div>
+        <div class="field col-6"><label for="sel-color">Cor</label>
+          <select class="select" id="sel-color" name="color">
+            <option value="verde" data-swatch="#3f5b45" data-meta="#3f5b45">Veludo verde</option><option value="cinza" data-swatch="#8b8f94" data-meta="#8b8f94">Linho cinza</option>
+            <option value="off" data-swatch="#f1ece2" data-meta="#f1ece2">Off white</option><option value="freijo" data-swatch="#a0703f" data-meta="#a0703f">Freijó</option>
+            <option value="duo" data-swatch="#1d1813|#c8955f" data-meta="2 tons">Preto e carvalho</option><option value="bad" data-swatch="red;position:fixed" disabled>Cor inválida (desativada)</option>
+          </select></div>
+        <div class="field col-6"><label for="sel-kind">Tipo 3D</label>
+          <select class="select" id="sel-kind" name="kind" data-search-placeholder="Buscar entre ${KINDS.length + 2} tipos…">
+            <option value="auto" data-icon="auto" data-hint="Detectado pela categoria Sofás">Automático (Sofá)</option>
+            <optgroup label="Escolher manualmente">${KINDS.map(([k, l]) => html`<option value="${k}" data-icon="${k}">${l}</option>`)}</optgroup>
+            <option value="none" data-icon="none" data-hint="Esconde o botão “Ver em 3D” na loja">Sem 3D</option>
+          </select></div>
+        <div class="field col-6"><label for="sel-uf">Estado (UF)</label><select class="select" id="sel-uf" name="state">${selectOptions(['MG', 'SP', 'RJ', 'ES', 'BA', 'GO', 'PR', 'SC', 'RS', 'DF'].map((u) => [u, u]), 'MG')}</select></div>
+        <div class="field col-6"><label for="sel-dis">Loja (sem permissão)</label><select class="select" id="sel-dis" name="locked" disabled><option>Ponte Nova</option></select><span class="hint">Sem permissão para trocar.</span></div>
+        <div class="field col-6"><label for="sel-err">Motivo</label><select class="select" id="sel-err" name="reason" aria-invalid="true"><option value="">Escolha o motivo</option><option>Cliente desistiu da compra</option><option>Sem estoque</option></select><span class="error">Escolha o motivo do cancelamento.</span></div>
+        <div class="field col-6"><label for="sel-busy">Lojas</label><select class="select" id="sel-busy" name="busy" aria-busy="true" data-placeholder="Carregando lojas…"></select></div>
+        <div class="field col-6"><label for="sel-opts">Com opções desativadas</label><select class="select" id="sel-opts" name="opts"><option value="a">Rascunho</option><option value="b" disabled>Arquivado (sem permissão)</option><option value="c">Ativo</option><option value="d" disabled>Excluído</option><option value="e">Revisão</option></select></div>
+        <div class="field col-12"><label for="sel-multi">Lojas (várias)</label><select class="select" id="sel-multi" name="stores" multiple>${storeOptions()}</select></div>
+        <div class="field col-6"><label for="sel-native">Nativo (data-native)</label><select class="select" id="sel-native" name="native" data-native><option>01</option><option>02</option></select></div>
+        <div class="field col-6"><label for="sel-hidden-opts">Opções escondidas</label><select class="select" id="sel-hidden-opts" name="hid"><option value="1">Visível 1</option><option value="2" hidden>Escondida</option><option value="3">Visível 3</option></select></div>
+        <div class="col-12 g-row"><button class="btn btn--primary" type="submit">Enviar (readForm)</button><button class="btn" type="reset">Restaurar (reset)</button><button class="btn" type="button" data-errors>Mostrar erros</button></div>
+        <div class="col-12 g-out" id="sel-out" aria-live="polite"></div>
+      </form></div></div>
+      <div class="stack">
+        <div class="card"><div class="card__head"><h3>Mudanças por código</h3></div><div class="card__body stack" style="--gap:10px">
+          <div class="g-row"><button class="btn btn--sm" type="button" data-prog="value">status.value = 'delivered'</button><button class="btn btn--sm" type="button" data-prog="index">status.selectedIndex = 2</button><button class="btn btn--sm" type="button" data-prog="optsel">option.selected = true</button></div>
+          <div class="g-row"><button class="btn btn--sm" type="button" data-prog="rerender">Re-renderizar opções (innerHTML)</button><button class="btn btn--sm" type="button" data-prog="disable">Alternar disabled</button><button class="btn btn--sm" type="button" data-prog="hide">Alternar hidden</button><button class="btn btn--sm" type="button" data-prog="required">Alternar required</button></div>
+          <div class="g-row"><button class="btn btn--sm" type="button" data-prog="replace">Trocar o select (replaceWith)</button><button class="btn btn--sm" type="button" data-prog="remove">Remover o select</button><button class="btn btn--sm" type="button" data-prog="add">Adicionar select novo</button></div>
+          <div id="prog-slot" class="field"><label for="sel-prog">Select de testes</label><select class="select" id="sel-prog" name="prog"><option value="a">Alfa</option><option value="b">Beta</option><option value="c">Gama</option></select></div>
+          <div class="g-out" id="prog-out"></div>
+        </div></div>
+        <div class="card"><div class="card__head"><h3>Barra de filtros (tamanho pequeno)</h3></div>
+          <div class="toolbar toolbar--sm"><div class="search">${icon('search', 'icon-sm')}<input class="input select--sm" style="height:32px" placeholder="Buscar código, cliente…" aria-label="Buscar"></div>
+          <select class="select select--sm" id="sel-sm" aria-label="Pagamento" data-prefix="Pagamento"><option value="">Todos</option><option value="paid" data-dot="ok">Pago</option><option value="pending" data-dot="warn">Pendente</option></select>
+          ${segmented({ name: 'density', label: 'Densidade', options: [['compact', 'Compacta', 'rows'], ['comfy', 'Confortável', 'list']], value: 'compact', size: 'sm', icons: true })}</div>
+        </div>
+        <div class="card"><div class="card__head"><h3>Dentro de uma tabela com rolagem</h3></div>
+          <div class="table-wrap g-scroll" id="scroll-wrap"><table class="table table--compact"><thead><tr><th>Pedido</th><th>Status</th><th>Loja</th></tr></thead><tbody>
+          ${Array.from({ length: 8 }, (_, i) => html`<tr><td class="code">AT00${1230 + i}</td><td><select class="select select--sm" id="row-sel-${i}" aria-label="Status do pedido AT00${1230 + i}">${Object.entries(ORDER_STATUS).map(([k, v]) => html`<option value="${k}" data-dot="${ui.TONE[v.tone]}">${v.short}</option>`)}</select></td><td>${storeMark(STORES[i], 24)}</td></tr>`)}
+          </tbody></table></div>
+        </div>
+        <div class="card"><div class="card__head"><h3>Em janelas</h3></div><div class="card__body g-row">
+          <button class="btn" type="button" data-open="cancel">Cancelar pedido (janela)</button><button class="btn" type="button" data-open="drawer">Gaveta com select</button><button class="btn" type="button" data-open="confirm">Confirmação</button><button class="btn" type="button" data-open="prompt">Pergunta</button>
+        </div></div>
+        <div class="card"><div class="card__head"><h3>Período e barra de salvar</h3></div><div class="card__body stack" style="--gap:12px">
+          <div class="g-row"><button class="select sel__trigger" style="width:auto" type="button" id="g-range"></button><span class="muted small" id="g-range-out"></span></div>
+          <form class="stack" id="g-save-form" style="--gap:10px"><div class="field"><label for="g-save-name">Nome do produto</label><input class="input" id="g-save-name" name="name" value="Sofá 3 Lugares Retrô"></div>
+            <div class="field"><label for="g-save-st">Status</label><select class="select" id="g-save-st" name="status"><option value="active" data-dot="ok">Ativo</option><option value="draft" data-dot="warn">Rascunho</option></select></div></form>
+        </div></div>
+        <div class="card"><div class="card__head"><h3>multiSelect() com cadeados</h3></div><div class="card__body"><div class="field" id="ms-slot"></div><div class="g-out" id="ms-out"></div></div></div>
+      </div>
+    </div>`
+    )
+  );
+
+  out.push(
+    sec(
+      'Navegação',
+      html`<div class="card"><div class="tabs" role="tablist"><button class="tab is-active" role="tab" aria-selected="true">Todos <span class="tab__n">14</span></button><button class="tab" role="tab" aria-selected="false"><span class="dot dot--sm t-warn"></span>Novos <span class="tab__n tab__n--warn">5</span></button><button class="tab" role="tab" aria-selected="false"><span class="dot dot--sm t-info"></span>Confirmados <span class="tab__n">2</span></button><button class="tab" role="tab" aria-selected="false"><span class="dot dot--sm t-plum"></span>Em separação <span class="tab__n">2</span></button></div>
+      <div class="card__body stack" style="--gap:12px">
+        <div class="g-row">${segmented({ name: 'period', label: 'Período', options: [['today', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias'], ['month', 'Este mês'], ['custom', 'Personalizado', 'calendar']], value: '7d' })}</div>
+        <div class="g-row"><div class="chips"><button class="chip is-active" type="button">Todos <span class="chip__count">31</span></button><button class="chip" type="button">Ativos <span class="chip__count">24</span></button><button class="chip" type="button">Rascunhos <span class="chip__count">7</span></button></div></div>
+        <div class="g-row"><div class="tchips"><button class="tchip is-on" type="button" role="checkbox" aria-checked="true">${icon('check', 'icon-xs')}Informações</button><button class="tchip is-on" type="button" role="checkbox" aria-checked="true">${icon('check', 'icon-xs')}Fotos</button><button class="tchip" type="button" role="checkbox" aria-checked="false">${icon('check', 'icon-xs')}Preço</button><button class="tchip" type="button" role="checkbox" aria-checked="false">${icon('check', 'icon-xs')}Estoque</button></div><span class="tag">Em 4 de 13 lojas</span></div>
+        ${pageHeader({ crumbs: [['Produtos', '#'], ['Sala de estar', '#'], ['Sofás']], title: 'Sofá 3 Lugares Retrô 210 cm', sub: 'Veludo verde · SKU-SOF-210', meta: html`${productStatusBadge('active')}<span class="tag">Em 4 de 13 lojas</span>`, actions: html`<button class="btn" type="button">${icon('copy')} Duplicar</button><button class="btn btn--primary" type="button">Salvar produto</button>` })}
+        <div class="g-row"><button class="btn" type="button" data-menu="g-menu">${icon('dots')} Mais ações</button><div style="position:relative"><div class="menu" id="g-menu" hidden style="left:0;right:auto"><div class="menu__label">Pedido</div><button type="button">${icon('print')} Imprimir romaneio</button><a href="#">${icon('whatsapp')} Abrir WhatsApp</a><hr><button type="button" class="is-danger">${icon('xCircle')} Cancelar pedido</button></div></div><span class="kpi__info" tabindex="0" data-tooltip="Soma dos pedidos não cancelados no período." aria-label="Ajuda">${icon('info', 'icon-sm')}</span></div>
+      </div></div>`
+    )
+  );
+
+  out.push(
+    sec(
+      'Status',
+      html`<div class="card"><div class="card__body stack" style="--gap:12px">
+      <div class="g-row">${Object.keys(ORDER_STATUS).map((s) => statusBadge(s))}</div>
+      <div class="g-row">${['pending', 'paid', 'refunded', 'failed'].map((s) => paymentBadge(s))} ${['active', 'draft', 'archived'].map((s) => productStatusBadge(s))} ${badge('Sem ponto', 'plum')} <span class="badge badge--plain badge--info">Simples</span> <span class="badge badge--lg badge--warning">Grande</span></div>
+      <div class="g-row">${deltaPill(25.2, { prev: 'R$ 106.693,75' })}${deltaPill(-5.3)}${deltaPill(0.2)}${deltaPill(null)} <span class="count-pill">9</span><span class="count-pill count-pill--warn">6</span><span class="count-pill count-pill--ok">3</span></div>
+      <div class="g-row">${ageChip(Date.now() - 12 * 60000)}${ageChip(Date.now() - 38 * 60000)}${ageChip(Date.now() - 192 * 60000)}${ageChip(Date.now() - 120 * 60000)}</div>
+      <div class="g-row">${livePill('on')}${livePill('retry')}${livePill('off')} ${livePill('on', { compact: true })}</div>
+      <div class="g-row">${STORES.slice(0, 4).map((s) => storeMark(s, 30))}${storeMark(STORES[12], 30)}${storeMark(STORES[2], 24)}${storeMark({ city: 'São João del-Rei', brand_name: 'Atual Móveis' }, 28)}${storeMark({ city: 'Ipatinga' }, 20)}
+        ${avatar('Marcus Gois', { self: true })}${avatar('Ana Lúcia Prado')}${avatar('Diego Santos', { tone: 'info' })}${avatar('Bruna', { tone: 'plum', size: 28 })}</div>
+    </div></div>`
+    )
+  );
+
+  const series = [9840, 21430, 12380, 18960, 41280, 11270, 18420];
+  const prev = [8200, 14900, 10400, 16100, 22800, 18300, 16000];
+  const days = ['ter 27', 'qua 28', 'qui 29', 'sex 30', 'sáb 31', 'dom 01', 'seg 02'];
+  out.push(
+    sec(
+      'Indicadores e gráficos',
+      html`<div class="kpis">
+        ${kpiCard({ label: 'Faturamento', value: money(133580.58), split: true, sub: 'Pedidos não cancelados', delta: 25.2, prev: 'R$ 106.693,75', spark: series, info: 'Soma dos pedidos não cancelados no período.', href: '#' })}
+        ${kpiCard({ label: 'Pedidos', value: html`33 <small>/ 35</small>`, sub: 'Válidos · 18 clientes novos', delta: 16, spark: [3, 6, 4, 5, 9, 3, 5] })}
+        ${kpiCard({ label: 'Ticket médio', value: money(4047.89), split: true, sub: 'Por pedido válido', delta: 7.9, spark: [3900, 3800, 4100, 3950, 4200, 4000, 4047] })}
+        ${waitKpi({ ages: [192, 95, 74, 38, 25, 12, 6] })}
+      </div>
+      <div class="g-grid g-grid--2 mt-3">
+        <div class="card"><div class="card__head"><div><h3 class="card__title">Faturamento por dia</h3><p class="card__sub">R$ 133.580,58 nos últimos 7 dias</p></div><div class="legend"><span><i></i>Este período</span><span><i class="prev"></i>7 dias anteriores</span></div></div><div class="card__body" id="g-area">${areaChart(
+          series.map((v, i) => ({ label: days[i], title: days[i], value: v, orders: [3, 5, 4, 5, 9, 3, 4][i], prevLabel: days[i].split(' ')[0] + ' anterior' })),
+          { prev, ariaLabel: 'Faturamento diário de 27/10 a 02/11: total R$ 133.580,58; melhor dia sábado 31/10 com R$ 41.280,00.' }
+        )}<dl class="chart-stats"><div><dt>Melhor dia · sáb 31/10</dt><dd>R$ 41.280,00</dd></div><div><dt>Média por dia</dt><dd>R$ 19.082,94</dd></div><div><dt>Hoje até agora</dt><dd>R$ 18.420,90</dd></div></dl></div></div>
+        <div class="card"><div class="card__head"><h3>Barras (relatórios)</h3></div><div class="card__body">${barChart(Array.from({ length: 14 }, (_, i) => ({ label: String(20 + i), value: Math.round(4000 + Math.sin(i) * 3000 + i * 400) })))}
+          <div class="stack mt-3" style="--gap:8px">${[['Ponte Nova', 92], ['Viçosa', 55], ['Mariana', 31]].map(([n, p]) => html`<div class="g-row"><span style="width:90px">${n}</span><div class="meter grow"><span style="width:${p}%"></span></div></div>`)}</div></div></div>
+      </div>
+      <div class="grid grid-4 mt-3"><div class="card kpi"><div class="kpi__label">Legado: kpi__label</div><div class="kpi__value">R$ 12.345,00</div><div class="kpi__hint">kpi__hint antigo continua bonito</div></div></div>`
+    )
+  );
+
+  const rows = [
+    { code: 'AT001241', name: 'Bruno Tavares Lima', city: 'Mariana, MG', store: STORES[3], total: 1299.9, status: 'pending', age: 6, isNew: true },
+    { code: 'AT001239', name: 'Carlos Henrique Souza', city: 'Ponte Nova, MG', store: STORES[0], total: 4898.9, status: 'pending', age: 38 },
+    { code: 'AT001237', name: 'Fernanda Costa Ribeiro', city: 'Viçosa, MG', store: STORES[2], total: 1459.8, status: 'pending', age: 74 },
+    { code: 'AT001233', name: 'José Geraldo Martins', city: 'Amparo do Serra, MG', store: STORES[0], total: 2199, status: 'out_for_delivery' },
+    { code: 'AT001232', name: 'Luana Rezende Costa', city: 'Viçosa, MG', store: STORES[2], total: 3148, status: 'preparing' },
+    { code: 'AT001230', name: 'Paulo Roberto Dias', city: 'Porto Firme, MG', store: STORES[2], total: 2899.9, status: 'canceled' },
+  ];
+  out.push(
+    sec(
+      'Tabela',
+      html`<div class="card">${table({
+        cards: true,
+        compact: true,
+        sort: { key: 'code', dir: 'desc' },
+        caption: 'Pedidos recentes',
+        rowAttrs: (r) => `class="is-clickable ${r.isNew ? 'is-new' : ''}"`,
+        columns: [
+          { key: 'code', label: 'Pedido', sort: 'code', render: (r) => html`<span class="code">${r.code}</span>${r.isNew ? html`<span class="new-dot"></span><span class="visually-hidden">, novo, ainda não aberto</span>` : ''}<span class="sub">${r.age !== undefined ? ageChip(Date.now() - r.age * 60000) : 'Hoje, 09:14'}</span>` },
+          { key: 'name', label: 'Cliente', render: (r) => html`<strong>${r.name}</strong><span class="sub">${r.city}</span>` },
+          { key: 'store', label: 'Loja', render: (r) => html`<span class="g-row" style="gap:8px;flex-wrap:nowrap">${storeMark(r.store, 22)}${r.store.city}</span>` },
+          { key: 'total', label: 'Total', cls: 'num', sort: 'total', render: (r) => money(r.total) },
+          { key: 'status', label: 'Status', render: (r) => statusBadge(r.status) },
+        ],
+        rows,
+      })}${pager({ page: 3, pageSize: 25, total: 640 })}</div>
+      <div class="g-grid mt-3"><div class="card">${skeleton('table', { rows: 3 })}</div><div class="card">${skeleton('list', { rows: 3 })}</div></div>
+      <div class="mt-3">${skeleton('form', { rows: 4 })}</div>`
+    )
+  );
+
+  out.push(
+    sec(
+      'Tetim e estados',
+      html`<div class="g-grid">
+        <div class="card" data-tetim-scope>${empty('Ainda sem pedidos por aqui', 'Quando alguém comprar na loja virtual de Coronel Fabriciano, o pedido aparece aqui com um aviso sonoro.', html`<button class="btn" type="button">${icon('copy')} Copiar link da loja</button><button class="btn btn--dark" type="button">Ver loja virtual</button>`, { art: 'empty-orders' })}</div>
+        <div class="card" data-tetim-scope>${empty('Nenhum produto cadastrado', 'Comece do zero ou copie produtos de outra loja da rede.', html`<button class="btn" type="button">Copiar de outra loja</button><button class="btn btn--primary" type="button">${icon('plus')} Novo produto</button>`, { art: 'empty-box' })}</div>
+        <div class="card" data-tetim-scope>${empty('Esta área é do administrador da loja', 'Cupons de Viçosa são liberados por Ana Paula Ribeiro.', html`<button class="btn btn--dark" type="button">Pedir acesso</button>`, { art: 'no-access' })}</div>
+        <div class="card" data-tetim-scope>${empty('Tudo em dia por aqui!', 'Nenhum pedido esperando e nenhum produto esgotado.', '', { art: 'all-done', size: 'inline' })}</div>
+        <div class="card" data-tetim-scope>${empty('Recorde do ano', 'R$ 41.280,00 no sábado. Parabéns, equipe!', '', { art: 'celebrate', size: 'inline' })}</div>
+        <div class="card">${empty('Nenhum pedido encontrado', 'Nada com “AT0099” nos últimos 7 dias. Confira o código ou amplie o período.', html`<button class="btn btn--sm" type="button">Limpar filtros</button>`)}</div>
+        <div class="card" data-tetim-scope>${empty('Vaga ocupada', 'Outro Tetim já está nesta tela: esta vira a variante simples.', '', { art: 'empty-box' })}${empty('Variante simples', 'Perdeu a vaga (prioridade igual, veio depois).', '', { art: 'empty-box', size: 'sm' })}</div>
+        <div class="card">${empty('Sem arte', 'Ícone em ladrilho quando art: false.', '', { art: false })}</div>
+        <div class="card">${errorBlock(Object.assign(new Error('Sem conexão com o servidor. Verifique a internet.'), { code: 'NET-01' }), { retry: () => toast('Tentando de novo…', 'info') })}</div>
+        <div class="card"><div class="card__body stack">${errorBlock('Somente administradores podem ver a auditoria.')}${loading('Carregando pedidos…')}</div></div>
+      </div>
+      <div class="stack mt-3" data-tetim-scope>${tip({ id: 'g-demo-' + Date.now(), text: '12 produtos de Viçosa estão sem medidas. Com medidas, a prévia 3D fica fiel ao móvel.', action: { label: 'Revisar 12 produtos', href: '#' } })}</div>
+      <div class="g-grid g-grid--2 mt-3">
+        <div class="card"><div class="card__body"><div class="gstrip"><span class="gstrip__face">${art('tetim-face', { w: 40, h: 40 })}</span><span class="gstrip__ico">${icon('sun')}</span><p class="gstrip__txt">Boa tarde de novo, Marcus. <b>7 pedidos aguardam confirmação</b> · o mais antigo há 3 h 12 min.</p><button class="btn btn--sm" type="button">Revisar 7</button></div></div></div>
+        <div class="card"><div class="card__body stack" style="--gap:10px"><div class="alert alert--warning">${icon('alert')}<div><strong>PIX ainda não identificado.</strong> Confira o extrato antes de confirmar.</div></div><div class="alert alert--success">${icon('checkCircle')}<div>Produto salvo.</div></div><div class="alert alert--info">${icon('info')}<div>As cópias são criadas ao salvar.</div></div><div class="alert">${icon('info')}<div>Aviso neutro.</div></div><div class="callout callout--pix">${icon('pix')}<div><strong>PIX ainda não identificado</strong>Valor esperado <b>R$ 1.459,80</b>.<div class="callout__acts"><button class="btn btn--sm" type="button">Copiar valor</button><button class="btn btn--sm btn--dark" type="button">Marcar como pago</button></div></div></div></div></div>
+      </div>
+      <div class="greet mt-3"><div class="greet__txt"><p class="greet__eyebrow">Segunda-feira, 2 de novembro · Toda a rede</p><h2 class="greet__title">Boa tarde, Marcus!</h2><p class="greet__sum">A rede já vendeu <b>R$ 18.420,90</b> hoje em 12 pedidos. <b>7 aguardam confirmação</b>, o mais antigo há 3 h 12 min.</p><div class="greet__acts"><button class="btn btn--primary" type="button">${icon('orders')} Revisar pedidos novos <span class="greet__n">7</span></button><button class="btn" type="button">${icon('reports')} Relatório do dia</button></div></div><div class="greet__art" aria-hidden="true"><span class="greet__window"><i></i><i></i></span><span class="greet__desk">${art('desk-wave', { w: 330, h: 220 })}</span></div></div>`
+    )
+  );
+
+  out.push(
+    sec(
+      'Avisos, janelas e etapas',
+      html`<div class="g-grid g-grid--2"><div class="card"><div class="card__body stack" style="--gap:10px">
+        <div class="g-row"><button class="btn btn--sm" type="button" data-toast="success">Sucesso</button><button class="btn btn--sm" type="button" data-toast="error">Erro</button><button class="btn btn--sm" type="button" data-toast="warning">Aviso</button><button class="btn btn--sm" type="button" data-toast="info">Info</button><button class="btn btn--sm" type="button" data-toast="new">Pedido novo</button><button class="btn btn--sm" type="button" data-toast="undo">Com Desfazer</button><button class="btn btn--sm" type="button" data-toast="tetim">Tetim</button><button class="btn btn--sm" type="button" data-toast="many">5 de uma vez</button></div>
+        <ol class="stepper"><li class="stepper__s is-done"><span class="stepper__dot">${icon('check', 'icon-xs')}</span><span class="stepper__l">Recebido</span><span class="stepper__t">13:20</span></li><li class="stepper__s is-current is-late" aria-current="step"><span class="stepper__dot">2</span><span class="stepper__l">Confirmado</span><span class="stepper__t">há 1 h 14</span></li><li class="stepper__s"><span class="stepper__dot">3</span><span class="stepper__l">Separação</span><span class="stepper__t"></span></li><li class="stepper__s"><span class="stepper__dot">4</span><span class="stepper__l">Em rota</span><span class="stepper__t"></span></li><li class="stepper__s"><span class="stepper__dot">5</span><span class="stepper__l">Entregue</span><span class="stepper__t"></span></li></ol>
+      </div></div>
+      <div class="card"><div class="card__body"><div class="timeline"><div class="timeline__item is-status">Status: <strong>Confirmado</strong><div class="muted small">Hoje, 13:32 · Ana Lúcia</div></div><div class="timeline__item is-payment">Pagamento: <strong>Pago</strong><div class="muted small">Hoje, 13:40</div></div><div class="timeline__item is-note">Nota interna<div class="tl__note">Cliente pediu entrega à tarde.</div></div><div class="timeline__item">Pedido criado pelo site<div class="muted small">Hoje, 13:20</div></div></div></div></div></div>
+      <div class="g-navy mt-3" style="justify-content:space-between"><span style="display:flex;align-items:center;gap:10px;color:#e8eef3"><span class="bulkbar__n">2</span>pedidos selecionados</span><span style="display:flex;gap:6px"><button class="bulkbar__b" type="button" style="background:rgba(255,255,255,.08)">${icon('sync', 'icon-sm')} Mudar status</button><button class="bulkbar__b" type="button">${icon('print', 'icon-sm')} Imprimir romaneio</button><button class="bulkbar__x" type="button" aria-label="Limpar seleção">${icon('close', 'icon-sm')}</button></span></div>`
+    )
+  );
+  return out;
+}
+
+render($('#gallery'), build());
+render($('[data-theme-seg]'), segmented({ name: 'theme', label: 'Tema', options: [['light', 'Claro', 'sun'], ['dark', 'Escuro', 'moon'], ['system', 'Sistema', 'monitor']], value: getTheme() }));
+$('[data-theme-seg] input').addEventListener('change', (e) => setTheme(e.target.value));
+$('input[data-mixed]').indeterminate = true;
+initUI();
+window.__ui = ui;
+
+// multiSelect
+const ms = multiSelect($('#ms-slot'), {
+  label: 'Cadastrar nas lojas',
+  name: 'ms',
+  allLabel: 'Todas as lojas',
+  options: STORES.map((s, i) => ({ value: s.id, label: s.brand_name === 'Atual Móveis' ? s.city : s.name, mark: s.id, hint: i < 2 ? 'R$ 3.499,90' : i === 4 ? 'Sem permissão de catálogo' : `${s.brand_name}`, locked: i < 2, selected: i < 2, disabled: i === 4, badge: i === 0 ? 'Esta loja' : i === 1 ? 'Já cadastrado' : '', badgeTone: i === 0 ? 'neu' : 'ok' })),
+  onChange: (v, d) => render($('#ms-out'), `valores: ${v.join(', ')}\n+ ${d.added.join(', ') || '—'}  − ${d.removed.join(', ') || '—'}`),
+  onLockedActivate: (o) => toast(`“${o.label}” já tem este produto (cópia travada).`, 'info'),
+});
+window.__ms = ms;
+window.__range = ui.dateRange($('#g-range'), { ...ui.presetRange('7d'), preset: '7d', onApply: (r) => render($('#g-range-out'), `${r.from} → ${r.to} ${r.preset || ''}`) });
+window.__bar = ui.saveBar({ form: $('#g-save-form'), label: 'Salvar produto', sections: (keys) => keys.map((k) => (k.startsWith('name') ? 'Informações' : 'Status')), onSave: () => new Promise((r) => setTimeout(() => { toast('Produto salvo', 'success'); r(); }, 600)) });
+
+// formulário
+const form = $('#sel-form');
+const showOut = (what) => render($('#sel-out'), `${what}: ${JSON.stringify(readForm(form))}`);
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  showOut('submit');
+});
+form.addEventListener('reset', () => setTimeout(() => showOut('reset'), 0));
+form.addEventListener('change', (e) => {
+  if (e.target.matches('select')) showOut(`change #${e.target.id}`);
+});
+$('[data-errors]').addEventListener('click', () => showErrors(form, { category_id: 'Escolha uma categoria.', store: 'Escolha a loja.' }));
+
+// programático
+const progOut = (m) => render($('#prog-out'), m);
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-prog]');
+  if (b) {
+    const st = $('#sel-status');
+    const p = $('#sel-prog');
+    switch (b.dataset.prog) {
+      case 'value': st.value = 'delivered'; break;
+      case 'index': st.selectedIndex = 2; break;
+      case 'optsel': st.options[4].selected = true; break;
+      case 'rerender': p.innerHTML = '<option value="x">Xis (novo)</option><option value="y" selected>Ípsilon (novo)</option><option value="z">Zê (novo)</option>'; break;
+      case 'disable': p.disabled = !p.disabled; break;
+      case 'hide': p.hidden = !p.hidden; break;
+      case 'required': p.required = !p.required; break;
+      case 'replace': { const n = document.createElement('select'); n.className = 'select'; n.id = 'sel-prog'; n.name = 'prog'; n.innerHTML = '<option value="r1">Trocado 1</option><option value="r2">Trocado 2</option>'; p.replaceWith(n); break; }
+      case 'remove': p?.remove(); break;
+      case 'add': $('#prog-slot').insertAdjacentHTML('beforeend', `<select class="select" id="sel-add-${Date.now()}" aria-label="Novo"><option>Novo A</option><option>Novo B</option></select>`); break;
+    }
+    progOut(`${b.dataset.prog} → status=${st.value}, prog=${$('#sel-prog')?.value ?? '(removido)'}, gatilhos=${$$('[data-sel-trigger]', $('#prog-slot')).length}`);
+  }
+  const t = e.target.closest('[data-toast]');
+  if (t) {
+    const k = t.dataset.toast;
+    if (k === 'undo') toast('Pedido AT001234 confirmado', 'success', 6000, { action: { label: 'Desfazer', onClick: () => toast('Confirmação desfeita', 'info') } });
+    else if (k === 'new') toast('Atual Móveis - Mariana · R$ 1.299,90 · PIX', 'new', 8000, { title: 'Novo pedido AT001241', action: { label: 'Abrir pedido', onClick: () => {} } });
+    else if (k === 'tetim') toast('Tudo pronto por hoje. Bom descanso!', 'tetim');
+    else if (k === 'many') ['Um', 'Dois', 'Três', 'Quatro', 'Cinco'].forEach((n, i) => toast(`Aviso ${n}`, ['info', 'success', 'warning', 'error', 'info'][i], 2500));
+    else toast({ success: 'Produto salvo', error: 'Não foi possível salvar. Sem conexão com o servidor.', warning: 'Esta área não está disponível para a loja selecionada.', info: 'Agora em Viçosa' }[k], k);
+  }
+  const o = e.target.closest('[data-open]');
+  if (o) {
+    const k = o.dataset.open;
+    if (k === 'cancel')
+      openModal({
+        title: 'Cancelar o pedido AT001239?',
+        role: 'alertdialog',
+        icon: 'alert',
+        tone: 'danger',
+        size: 'sm',
+        body: html`<form class="stack" id="cancel-form" novalidate><p class="modal__text">Os 2 itens voltam ao estoque de Ponte Nova e Carlos vê o cancelamento no link do pedido. Dá para reabrir depois.</p>
+          <div class="field"><label for="cancel-reason">Motivo</label><select class="select" id="cancel-reason" name="reason" required><option value="">Escolha o motivo</option>${['Cliente desistiu da compra', 'Sem estoque', 'Fora da área de entrega', 'Pagamento não aprovado', 'Pedido duplicado', 'Outro motivo'].map((m) => html`<option>${m}</option>`)}</select></div>
+          <div class="field"><label for="cancel-det">Detalhes <span class="opt-tag">opcional</span></label><textarea class="textarea" id="cancel-det" name="details"></textarea></div>
+          ${switchField({ label: 'Avisar pelo WhatsApp', name: 'wa', checked: true, hint: 'Abre a conversa com a mensagem pronta' })}</form>`,
+        actions: html`<button class="btn" type="button" data-close data-initial-focus>Voltar</button><button class="btn btn--danger" type="button" data-ok>Cancelar pedido</button>`,
+        onMount: (el, close) => $('[data-ok]', el).addEventListener('click', () => {
+          const f = $('#cancel-form', el);
+          if (!f.reason.value) return showErrors(f, { reason: 'Escolha o motivo do cancelamento.' });
+          close();
+          toast(`Pedido cancelado: ${f.reason.value}`, 'success');
+        }),
+      });
+    if (k === 'drawer')
+      drawer({
+        title: 'Pedido AT001237',
+        head: html`<div><div class="g-row" style="gap:8px">${storeMark(STORES[2], 24)}<span class="muted small">Ativa Móveis - Viçosa · pelo site</span></div><div class="g-row mt-2"><span class="drawer__code code">AT001237</span>${statusBadge('pending')}${ageChip(Date.now() - 74 * 60000, { prefix: 'aguardando há ' })}</div></div>`,
+        nav: { index: 5, total: 14, onPrev: () => toast('Anterior', 'info', 1200), onNext: () => toast('Próximo', 'info', 1200) },
+        body: html`<div class="field"><label for="dr-status">Mudar status</label><select class="select" id="dr-status">${Object.entries(ORDER_STATUS).map(([k2, v]) => html`<option value="${k2}" data-dot="${ui.TONE[v.tone]}">${v.label}</option>`)}</select></div><div class="callout callout--pix">${icon('pix')}<div><strong>PIX ainda não identificado</strong>Confira o extrato antes de confirmar.</div></div>${Array.from({ length: 6 }, (_, i) => html`<div class="dsec"><div class="dsec__head"><h3>Seção ${i + 1}</h3></div><p class="muted">Conteúdo para rolar a gaveta.</p></div>`)}`,
+        side: html`<h3 class="h3">Histórico</h3><div class="timeline"><div class="timeline__item is-status">Pedido criado</div></div><div class="field"><label for="dr-vis">Visibilidade</label><select class="select" id="dr-vis"><option>Só a equipe</option><option>Visível ao cliente</option></select></div>`,
+        foot: html`<button class="btn btn--danger-ghost" type="button" data-close>Cancelar pedido</button><span class="grow"></span><button class="btn" type="button">${icon('print')} Imprimir</button><button class="btn btn--primary" type="button">Confirmar pedido</button>`,
+      });
+    if (k === 'confirm') confirmDialog({ title: 'Sair sem salvar?', message: 'As alterações deste produto serão perdidas.', confirmLabel: 'Sair sem salvar', danger: true }).then((ok) => toast(ok ? 'Saiu' : 'Ficou', 'info'));
+    if (k === 'prompt') promptDialog({ title: 'Nova categoria', label: 'Nome', required: true, hint: 'Aparece no menu da loja virtual.' }).then((v) => v !== null && toast(`Criada: ${v}`, 'success'));
+  }
+  if (e.target.closest('[data-busy]')) ui.withBusy(e.target.closest('[data-busy]'), () => new Promise((r) => setTimeout(r, 1200)));
+});
+
+  </script>
+</body>
+</html>

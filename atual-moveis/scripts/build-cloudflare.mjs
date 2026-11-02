@@ -18,6 +18,7 @@ for (const item of ['index.html', 'robots.txt', 'assets', 'admin']) {
 // Páginas de teste temporárias nunca vão para o ar
 rmSync(join(out, 'assets/js/3d/_viewer-test.html'), { force: true });
 rmSync(join(out, 'assets/js/3d/_room-test.html'), { force: true });
+rmSync(join(out, 'admin/_ui.html'), { force: true });
 
 // ---------- Versão dos arquivos (cache) ----------
 const walk = (dir) =>
