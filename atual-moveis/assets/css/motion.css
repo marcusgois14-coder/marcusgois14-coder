@@ -1,0 +1,556 @@
+/* =========================================================
+   Atual Móveis — camada de movimento (par de assets/js/motion.js)
+   - Tudo que esconde ou anima fica sob html.motion-ok, classe que o motion.js só põe quando há
+     IntersectionObserver, Web Animations e o usuário não pediu movimento reduzido.
+     Sem JS, com movimento reduzido ou num navegador antigo, nada some e nada se mexe.
+   - Só transform/opacity (e as propriedades individuais translate/scale/rotate, que somam com o
+     transform que cada componente já usa): nada de reflow durante as animações.
+   - Carregado depois de style.css, shop.css e das folhas do 3D.
+   ========================================================= */
+
+:root {
+  --m-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --m-ease-soft: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --m-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --m-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --m-spring-soft: cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    /* molas com velocidade inicial (saem rápido, passam um pouco e assentam) */
+    --m-spring: linear(0, 0.232, 0.467, 0.682, 0.864, 1.007, 1.108, 1.172, 1.202, 1.205, 1.19, 1.162, 1.128, 1.092, 1.058, 1.029, 1.005, 0.988, 0.976, 0.97, 0.969, 0.97, 0.974, 0.979, 0.984, 0.99, 0.994, 0.998, 1.001, 1.003, 1.004, 1.005, 1.005, 1.004, 1.003, 1.003, 1);
+    --m-spring-soft: linear(0, 0.27, 0.513, 0.718, 0.881, 1, 1.082, 1.13, 1.152, 1.154, 1.143, 1.124, 1.101, 1.076, 1.054, 1.034, 1.018, 1.005, 0.997, 0.991, 0.988, 0.987, 0.987, 0.988, 0.99, 0.992, 0.994, 0.996, 0.998, 0.999, 1, 1.001, 1.001, 1.001, 1.001, 1.001, 1);
+  }
+}
+
+/* ---------- Toque: onda nos botões cheios ---------- */
+.motion-ok :is(.btn--primary, .btn--dark, .btn--whats, .btn-checkout, .btn-pill, .upsell__btn, .mpill--cta, .header__track, .cookie__btn) {
+  position: relative;
+}
+
+.m-ripple {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.m-ripple > span {
+  position: absolute;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- Revelação ao rolar (html.motion-ok + .m-reveal, posto pelo JS só abaixo da dobra) ---------- */
+.motion-ok .m-reveal {
+  opacity: 0;
+  translate: 0 28px;
+}
+
+.motion-ok .m-reveal.m-r-fade {
+  translate: none;
+}
+
+.motion-ok .m-reveal.m-r-zoom {
+  translate: none;
+  scale: 0.94;
+}
+
+.motion-ok .m-reveal.m-r-left {
+  translate: -36px 0;
+}
+
+.motion-ok .m-reveal.m-r-right {
+  translate: 36px 0;
+}
+
+.motion-ok .m-reveal.is-in {
+  opacity: 1;
+  translate: none;
+  scale: none;
+  transition:
+    opacity 0.7s var(--m-ease-soft) var(--m-delay, 0ms),
+    translate 0.9s var(--m-ease-out) var(--m-delay, 0ms),
+    scale 1s var(--m-ease-out) var(--m-delay, 0ms);
+}
+
+/* ---------- "Voo" até o carrinho, explosão do coração, anel e confete ---------- */
+.m-fly {
+  position: fixed;
+  z-index: 600;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--img-bg, #f2f2f2);
+  box-shadow: 0 0 0 2px #fff, 0 14px 30px -10px rgba(40, 18, 6, 0.45);
+  pointer-events: none;
+  will-change: transform, opacity;
+  contain: layout paint;
+}
+
+.m-fly--line {
+  border-radius: 12px;
+  box-shadow: 0 18px 40px -14px rgba(40, 18, 6, 0.42);
+}
+
+.m-fly img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.m-burst {
+  position: fixed;
+  z-index: 600;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.m-burst > i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  will-change: transform, opacity;
+}
+
+.m-burst > .m-burst__ring {
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border: 2px solid var(--brand-red, #ea1e2a);
+}
+
+.m-ring {
+  position: fixed;
+  z-index: 350;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border: 2px solid var(--accent, #e01b26);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.m-confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.m-ghost-line {
+  box-sizing: border-box;
+  background: var(--white, #fff);
+}
+
+/* ---------- Coração: o JS faz o "pop" no clique (sem repetir a cada renderização) ---------- */
+.motion-ok .card__wish.is-active .i-full {
+  animation: none;
+}
+
+/* ---------- Gavetas, janelas e menu: abrem com mola, fecham mais rápido ---------- */
+.motion-ok .drawer {
+  transition: transform 0.24s var(--m-ease-in), visibility 0s linear 0.24s;
+}
+
+.motion-ok .drawer.is-open {
+  box-shadow: -18px 0 50px -20px rgba(20, 10, 4, 0.28);
+  transition: transform 0.52s var(--m-ease-out), visibility 0s;
+}
+
+.motion-ok .overlay,
+.motion-ok .sheet-overlay {
+  transition: opacity 0.2s ease;
+}
+
+.motion-ok .overlay.is-visible,
+.motion-ok .sheet-overlay.is-visible {
+  transition: opacity 0.4s var(--m-ease-soft);
+}
+
+/* Camada saindo não segura toques: durante a animação de fechar, o toque passa para a página
+   (antes, tocar num produto logo depois de fechar o carrinho caía na sobreposição que ainda sumia). */
+.motion-ok .drawer:not(.is-open),
+.motion-ok .sheet:not(.is-open),
+.motion-ok .menu-drawer:not(.is-open),
+.motion-ok .overlay:not(.is-visible),
+.motion-ok .sheet-overlay:not(.is-visible),
+.motion-ok .menu-overlay:not(.is-visible) {
+  pointer-events: none;
+}
+
+/* troca de camada: uma sobreposição some e a outra aparece no mesmo quadro (o JS põe e tira a classe) */
+.motion-ok .overlay.m-instant,
+.motion-ok .sheet-overlay.m-instant {
+  transition: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  @supports ((-webkit-backdrop-filter: blur(2px)) or (backdrop-filter: blur(2px))) {
+    .motion-ok .overlay,
+    .motion-ok .sheet-overlay {
+      -webkit-backdrop-filter: blur(3px);
+      backdrop-filter: blur(3px);
+    }
+  }
+}
+
+.motion-ok .menu-drawer {
+  transition: transform 0.2s var(--m-ease-in), visibility 0s linear 0.2s;
+}
+
+.motion-ok .menu-drawer.is-open {
+  transition: transform 0.46s var(--m-ease-out), visibility 0s;
+}
+
+@media (min-width: 750px) {
+  .motion-ok .sheet {
+    transform: translate(-50%, -47%) scale(0.965);
+    transition: opacity 0.16s ease-in, transform 0.2s var(--m-ease-in), visibility 0s linear 0.2s;
+  }
+
+  .motion-ok .sheet.is-open {
+    transform: translate(-50%, -50%) scale(1);
+    transition: opacity 0.22s ease-out, transform 0.6s var(--m-spring-soft), visibility 0s;
+  }
+
+  /* 3D: sem escala (o visualizador mede o palco com getBoundingClientRect ao abrir) */
+  .motion-ok .sheet.sheet--3d {
+    transform: translate(-50%, -48%);
+  }
+
+  .motion-ok .sheet.sheet--3d.is-open {
+    transform: translate(-50%, -50%);
+  }
+}
+
+@media (max-width: 749px) {
+  .motion-ok .sheet {
+    transform: translateY(100%);
+    transition: transform 0.26s var(--m-ease-in), opacity 0.12s linear 0.14s, visibility 0s linear 0.26s;
+  }
+
+  .motion-ok .sheet.is-open {
+    transform: none;
+    transition: transform 0.5s var(--m-ease-out), opacity 0.1s linear, visibility 0s;
+  }
+}
+
+/* Troca de camada (ex.: produto -> carrinho): a que sai some no lugar, rápido, sem cruzar com a que entra.
+   (o JS põe .m-handoff só quando outra camada abre no mesmo instante e tira depois de ~300 ms) */
+.motion-ok .drawer.m-handoff:not(.is-open) {
+  transform: none;
+  opacity: 0;
+  transition: opacity 0.18s ease-out, visibility 0s linear 0.18s;
+}
+
+.motion-ok .sheet.m-handoff:not(.is-open) {
+  opacity: 0;
+  transition: opacity 0.18s ease-out, transform 0.2s var(--m-ease-out), visibility 0s linear 0.2s;
+}
+
+@media (min-width: 750px) {
+  .motion-ok .sheet.m-handoff:not(.is-open) {
+    transform: translate(-50%, -50%) scale(0.98);
+  }
+}
+
+@media (max-width: 749px) {
+  .motion-ok .sheet.m-handoff:not(.is-open) {
+    transform: scale(0.985);
+  }
+}
+
+/* ---------- Checkout: barra da etapa enche, número salta, sucesso desenha o ✓ ---------- */
+.motion-ok .steps li {
+  position: relative;
+}
+
+.motion-ok .steps.m-step-fwd li.is-active {
+  border-bottom-color: #e6e6e6;
+}
+
+.motion-ok .steps.m-step-fwd li.is-active::after,
+.motion-ok .steps.m-step-back li.is-active + li::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 3px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.motion-ok .steps.m-step-fwd li.is-active::after {
+  transform-origin: left center;
+  animation: m-fill 0.6s var(--m-ease-out) 0.06s both;
+}
+
+.motion-ok .steps.m-step-back li.is-active + li::after {
+  transform-origin: left center;
+  animation: m-drain 0.42s var(--m-ease-out) both;
+}
+
+.motion-ok .steps.m-step-fwd li.is-active span,
+.motion-ok .steps li.m-just-done span {
+  animation: m-pop 0.55s var(--m-spring) both;
+}
+
+.motion-ok .steps.m-step-fwd li.is-active span {
+  animation-delay: 0.14s;
+}
+
+.motion-ok .success__icon.m-draw svg {
+  stroke-dasharray: 22;
+  animation: m-draw 0.45s ease-out 0.32s both;
+}
+
+@keyframes m-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes m-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes m-pop {
+  from {
+    scale: 0.4;
+  }
+  to {
+    scale: 1;
+  }
+}
+
+@keyframes m-draw {
+  from {
+    stroke-dashoffset: 22;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ---------- Rastreio: a linha do tempo enche etapa por etapa ---------- */
+.motion-ok .track-steps.m-track-anim li.is-done::after {
+  background: linear-gradient(90deg, var(--accent) 50%, #e2e2e2 50%);
+  background-size: 200% 100%;
+  animation: m-track-line 0.36s var(--m-ease-soft) calc(var(--m-i, 0) * 190ms) both;
+}
+
+.motion-ok .track-steps.m-track-anim li.is-done::before {
+  animation:
+    m-track-dot 0.55s var(--m-spring) calc(var(--m-i, 0) * 190ms + 120ms),
+    m-track-dot-color 0.2s linear calc(var(--m-i, 0) * 190ms + 120ms) both;
+}
+
+.motion-ok .track-steps.m-track-anim li.is-done {
+  animation: m-track-label 0.3s ease-out calc(var(--m-i, 0) * 190ms + 120ms) both;
+}
+
+@keyframes m-track-line {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@keyframes m-track-dot {
+  from {
+    scale: 0.45;
+  }
+  to {
+    scale: 1;
+  }
+}
+
+@keyframes m-track-dot-color {
+  from {
+    border-color: #d4d4d4;
+    background-color: #fff;
+  }
+}
+
+@keyframes m-track-label {
+  from {
+    color: var(--muted);
+  }
+}
+
+/* ---------- Aviso (toast): sobe com mola e o ✓ entra girando ---------- */
+/* Largura pelo conteúdo: com left: 50% a largura "encolhe para caber" em metade da tela (195 px num celular)
+   e "Adicionado aos favoritos" quebrava em duas linhas; o max-width de style.css continua valendo. */
+.toast {
+  width: max-content;
+}
+
+.toast[data-m-tone='ok'] {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.toast[data-m-tone='ok']::before {
+  content: '';
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0 0 0 -6px;
+  border-radius: 50%;
+  background: #2fbf71 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6.5 12.5 3.8 3.8 7.4-7.6' fill='none' stroke='%23fff' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
+  vertical-align: middle;
+}
+
+.motion-ok .toast {
+  transform: translate(-50%, 22px) scale(0.94);
+  transition: opacity 0.18s ease, transform 0.22s var(--m-ease-in);
+}
+
+.motion-ok .toast.is-visible {
+  transform: translate(-50%, 0) scale(1);
+  transition: opacity 0.2s ease, transform 0.6s var(--m-spring);
+}
+
+.motion-ok .toast.is-visible[data-m-tone='ok']::before {
+  animation: m-toast-check 0.6s var(--m-spring) 0.12s both;
+}
+
+@keyframes m-toast-check {
+  from {
+    scale: 0;
+    rotate: -90deg;
+  }
+  to {
+    scale: 1;
+    rotate: 0deg;
+  }
+}
+
+/* ---------- Carrinho: barra do frete cresce a partir da esquerda ---------- */
+.ship__bar span {
+  transform-origin: left center;
+}
+
+/* ---------- Passar o mouse (só com mouse de verdade) ---------- */
+@media (hover: hover) and (pointer: fine) {
+  /* espaço para o card subir sem ser cortado pelo trilho (padding + margem negativa: nada se desloca;
+     flow-root segura a margem dentro do .slider, então as setas também não mudam de lugar) */
+  .motion-ok .slider {
+    display: flow-root;
+  }
+
+  .motion-ok .slider__track {
+    padding-top: 12px;
+    margin-top: -12px;
+  }
+
+  .motion-ok .card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    border-radius: 8px;
+    box-shadow: 0 26px 30px -20px rgba(48, 24, 8, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.45s var(--m-ease-out), transform 0.45s var(--m-ease-out);
+  }
+
+  .motion-ok .card:hover::before {
+    opacity: 1;
+    transform: translateY(-7.5px);
+  }
+
+  .motion-ok .card__media,
+  .motion-ok .card__ui {
+    transition-duration: 0.45s;
+    transition-timing-function: var(--m-ease-out);
+  }
+
+  .motion-ok .card__media img {
+    transition: transform 0.8s var(--m-ease-out), opacity 0.16s ease;
+  }
+
+  .motion-ok .card:hover .card__media img {
+    transform: scale(1.045);
+  }
+
+  .motion-ok .cat {
+    position: relative;
+  }
+
+  .motion-ok .cat::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 5px;
+    box-shadow: 0 20px 26px -16px rgba(48, 24, 8, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s var(--m-ease-out), translate 0.4s var(--m-ease-out);
+  }
+
+  .motion-ok .cat__tile {
+    transition: translate 0.4s var(--m-ease-out);
+  }
+
+  .motion-ok .cat:hover .cat__tile {
+    translate: 0 -5px;
+  }
+
+  .motion-ok .cat:hover::before {
+    opacity: 1;
+    translate: 0 -5px;
+  }
+
+  .motion-ok .cat__tile img,
+  .motion-ok .tile img {
+    transition: transform 0.9s var(--m-ease-out);
+  }
+
+  .motion-ok .tile:hover img {
+    transform: scale(1.06);
+  }
+}
+
+/* Movimento reduzido: o JS tira html.motion-ok; isto é só uma garantia extra. */
+@media (prefers-reduced-motion: reduce) {
+  .m-reveal {
+    opacity: 1 !important;
+    translate: none !important;
+    scale: none !important;
+  }
+
+  .m-fly,
+  .m-burst,
+  .m-ring,
+  .m-confetti,
+  .m-ripple {
+    display: none !important;
+  }
+}

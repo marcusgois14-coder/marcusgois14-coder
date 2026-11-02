@@ -1,0 +1,596 @@
+/* =========================================================
+   Ilustrações da marca (Tetim) e seção de vantagens
+   Artes em assets/img/art/ (SVG animado por dentro, decorativo).
+   Toda arte tem width/height no <img>: o espaço fica reservado antes de carregar (sem salto).
+   Movimento extra daqui só com html.motion-ok (o motion.js liga; "reduzir movimento" desliga).
+   ========================================================= */
+
+:root {
+  --art-cream: #fbf3ef;
+  --art-ink: #3a3332;
+}
+
+/* ---------- Arte de estado (vazio, erro, fora da área…) ---------- */
+.state-art {
+  display: block;
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  margin: 0 auto;
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+.state-art--sm {
+  max-width: 160px;
+}
+
+.state-art--xs {
+  max-width: 112px;
+}
+
+/* aparece suave quando entra na tela (gavetas e janelas renderizam o estado na hora) */
+.motion-ok .state-art,
+.motion-ok .art-loader__img,
+.motion-ok .mascot-hello__img {
+  animation: art-in 0.5s var(--m-ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@keyframes art-in {
+  from {
+    opacity: 0;
+    scale: 0.94;
+  }
+}
+
+/* ---------- Esperas: Tetim pulando ---------- */
+.art-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.art-loader__img {
+  display: block;
+  width: 96px;
+  height: 96px;
+}
+
+.art-loader--sm {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0;
+  text-align: left;
+}
+
+.art-loader--sm .art-loader__img {
+  width: 48px;
+  height: 48px;
+  margin: -6px 0 -4px -4px;
+}
+
+/* Carregando a loja (antes do catálogo chegar): no lugar do carrossel, que fica escuro */
+.hero__boot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-top: var(--hero-boot-top, 60px);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 15px;
+  letter-spacing: 0.4px;
+  /* conexões rápidas nem chegam a ver o carregamento */
+  animation: art-boot 0.45s ease 0.35s both;
+}
+
+.hero__boot img {
+  width: 104px;
+  height: 104px;
+}
+
+@keyframes art-boot {
+  from {
+    opacity: 0;
+  }
+}
+
+/* movimento reduzido: sem esmaecer, mas mantém a espera de 0,35 s (carregamento rápido não pisca o aviso) */
+@media (prefers-reduced-motion: reduce) {
+  .hero__boot {
+    animation-duration: 1ms;
+  }
+}
+
+/* erro ao carregar: o "Carregando a loja…" que ficou atrás da tela de erro sai (também para leitores de tela) */
+body:has(.boot-error:not([hidden])) .hero__boot {
+  display: none;
+}
+
+/* Enquanto a loja carrega (main.js põe .is-ready no <html> no fim do boot), o rodapé fica abaixo da dobra:
+   assim ele não "pula" na tela quando o catálogo chega (era a maior mudança de layout do carregamento). */
+html:not(.is-ready) [data-home-sections] {
+  min-height: 100vh;
+}
+
+/* ---------- Gavetas: carrinho e favoritos vazios ---------- */
+.cart-empty__art {
+  max-width: 250px;
+}
+
+.cart-empty__art + .cart-empty__title {
+  margin-top: 6px;
+}
+
+/* ---------- Busca e listagem sem resultado ---------- */
+.search__empty .state-art {
+  max-width: 210px;
+  margin-bottom: 6px;
+}
+
+.listing__empty .state-art {
+  max-width: 260px;
+  margin-bottom: 10px;
+}
+
+/* ---------- Aviso com arte (loja fechada, fora da área) ---------- */
+.notice--art {
+  align-items: center;
+  gap: 12px;
+}
+
+.notice--art .notice__art {
+  flex: none;
+  width: 104px;
+  max-width: none;
+  margin: -4px 0 -4px -4px;
+}
+
+@media (max-width: 420px) {
+  .notice--art .notice__art {
+    width: 84px;
+  }
+}
+
+/* ---------- Seletor de loja ---------- */
+.mascot-hello {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 14px -6px;
+}
+
+.mascot-hello__img {
+  flex: none;
+  width: 104px;
+  height: 104px;
+}
+
+.mascot-hello__bubble {
+  position: relative;
+  flex: 1;
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: var(--art-cream);
+  font-size: 15px;
+  line-height: 1.45;
+  letter-spacing: 0.2px;
+  color: var(--ink);
+  transform-origin: 0 60%;
+}
+
+.mascot-hello__bubble strong {
+  font-weight: 700;
+  /* vermelho da marca um tom mais fundo: o #ea1e2a dá só 4,1:1 no creme em 15 px (WCAG pede 4,5:1); este dá 5,4:1 */
+  color: #c8141f;
+}
+
+/* biquinho do balão apontando para o Tetim */
+.mascot-hello__bubble::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  border-radius: 0 0 0 4px;
+  background: inherit;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.motion-ok .mascot-hello__bubble {
+  animation: art-bubble 0.55s var(--m-spring, cubic-bezier(0.34, 1.56, 0.64, 1)) 0.28s both;
+}
+
+@keyframes art-bubble {
+  from {
+    opacity: 0;
+    scale: 0.86;
+    translate: -8px 0;
+  }
+}
+
+.picker__out {
+  margin-top: 8px;
+}
+
+.picker__out .state-art {
+  margin-bottom: 8px;
+}
+
+/* ---------- Pedido recebido ---------- */
+.success__icon--art {
+  display: block;
+  width: auto;
+  height: auto;
+  margin: -8px auto 2px;
+  border-radius: 0;
+  background: none;
+}
+
+.success__icon--art .state-art {
+  max-width: 280px;
+  /* o motion.js já faz a entrada (mola) do .success__icon */
+  animation: none;
+}
+
+/* ---------- Rastreio: pedido não encontrado / link inválido ---------- */
+.track-miss {
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.track-miss .state-art {
+  margin-bottom: 10px;
+}
+
+.track-miss .notice {
+  justify-content: center;
+  text-align: left;
+}
+
+/* ---------- Erro ao carregar a loja ---------- */
+.boot-error .state-art {
+  max-width: 260px;
+  margin-bottom: 12px;
+}
+
+.boot-error strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 20px;
+}
+
+.boot-error p {
+  margin-bottom: 18px;
+  color: var(--muted);
+}
+
+/* ---------- Rodapé: Tetim ao lado do slogan ---------- */
+.footer__sign {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 0 0 24px -14px;
+}
+
+.footer__sign .footer__slogan {
+  margin-bottom: 4px;
+}
+
+.footer__mascot {
+  flex: none;
+  width: 124px;
+  height: 124px;
+}
+
+@media (max-width: 989px) {
+  .footer__sign {
+    margin-bottom: 20px;
+  }
+
+  .footer__mascot {
+    width: 100px;
+    height: 100px;
+  }
+}
+
+/* =========================================================
+   Vantagens da loja (página inicial, depois da 1ª prateleira)
+   ========================================================= */
+.perks {
+  padding: 22px 20px 38px;
+  background: var(--white);
+}
+
+.perks__inner {
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.perks__head {
+  margin-bottom: 22px;
+}
+
+.perks__title {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.perks__list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.perks--2 .perks__list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.perks--1 .perks__list {
+  grid-template-columns: minmax(0, 560px);
+}
+
+.perk {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 22px;
+  background: var(--art-cream);
+  /* recorta a arte nos cantos arredondados também no Safari */
+  isolation: isolate;
+}
+
+.perk__art {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #f1e7dc;
+}
+
+.perk__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.perk__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding: 20px 24px 22px;
+}
+
+.perk__title {
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.1px;
+}
+
+.perk__text {
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 1.5;
+  letter-spacing: 0.2px;
+  color: var(--art-ink);
+}
+
+.perk__note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.2px;
+  color: var(--success);
+}
+
+.perk__note svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+}
+
+.perk__link {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 16px;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.perk__link svg {
+  width: 18px;
+  height: 18px;
+  color: var(--brand-red);
+}
+
+/* o cartão inteiro é clicável (link esticado), com um só link para leitores de tela */
+.perk__link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+}
+
+/* anel de foco no cartão inteiro; navegador sem :has mantém o anel normal do link */
+@supports selector(:has(*)) {
+  .perk__link:focus-visible {
+    outline: none;
+  }
+
+  .perk:has(.perk__link:focus-visible) {
+    outline: 2px solid var(--ink);
+    outline-offset: 3px;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .perk:hover .perk__link {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  .motion-ok .perk__link svg {
+    transition: translate 0.3s var(--m-ease-out, ease);
+  }
+
+  .motion-ok .perk:hover .perk__link svg {
+    translate: 4px 0;
+  }
+
+  .motion-ok .perk {
+    transition:
+      transform 0.45s var(--m-ease-out),
+      box-shadow 0.45s var(--m-ease-out);
+  }
+
+  .motion-ok .perk:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 22px 44px -22px rgba(74, 40, 16, 0.32);
+  }
+
+  .motion-ok .perk__img {
+    transition: transform 0.7s var(--m-ease-out);
+  }
+
+  .motion-ok .perk:hover .perk__img {
+    transform: scale(1.035);
+  }
+}
+
+/* Só 1 ou 2 vantagens no computador: cartão deitado (arte à esquerda), para a arte não virar um painel enorme */
+@media (min-width: 990px) {
+  .perks--1 .perk,
+  .perks--2 .perk {
+    flex-direction: row;
+  }
+
+  .perks--1 .perk__art,
+  .perks--2 .perk__art {
+    flex: 0 0 56%;
+  }
+
+  .perks--1 .perk__body,
+  .perks--2 .perk__body {
+    justify-content: center;
+    padding: 24px 28px;
+  }
+
+  .perks--1 .perk__link,
+  .perks--2 .perk__link {
+    margin-top: 0;
+  }
+
+  .perks--1 .perks__list {
+    grid-template-columns: minmax(0, 860px);
+  }
+}
+
+/* Celular e tablet: fileira que desliza com o dedo, mostrando a pontinha do próximo cartão */
+@media (max-width: 989px) {
+  .perks {
+    padding: 8px 0 28px;
+  }
+
+  .perks__head {
+    margin-bottom: 16px;
+    padding: 0 14px;
+  }
+
+  .perks__title {
+    font-size: 22px;
+    line-height: 1.15;
+  }
+
+  /* 6 px de folga em cima/embaixo (compensados na margem: nada se desloca) para o anel de foco do cartão
+     não ser cortado pela rolagem horizontal */
+  .perks .perks__list {
+    display: flex;
+    gap: 12px;
+    margin: -6px 0 -2px;
+    padding: 6px 14px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 14px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .perks__list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .perk {
+    flex: 0 0 min(84%, 380px);
+    border-radius: 18px;
+    scroll-snap-align: start;
+  }
+
+  .perks--1 .perk {
+    flex-basis: 100%;
+  }
+
+  .perk__body {
+    padding: 16px 18px 18px;
+  }
+
+  .perk__title {
+    font-size: 19px;
+  }
+
+  .perk__text {
+    margin-top: 6px;
+    font-size: 14.5px;
+  }
+}
+
+@media (min-width: 750px) and (max-width: 989px) {
+  .perks__head {
+    padding: 0 20px;
+  }
+
+  .perks .perks__list {
+    padding: 6px 20px;
+    scroll-padding-inline: 20px;
+  }
+
+  .perk {
+    flex-basis: calc((100% - 24px) / 2.15);
+  }
+}
+
+/* palavras que não se separam (ex.: "Móveis - Viçosa" no nome da loja) */
+.art-nb {
+  white-space: nowrap;
+}

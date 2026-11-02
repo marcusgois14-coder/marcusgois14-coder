@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <!-- Tema antes de pintar (sem piscar): o mesmo trecho de ui.js → THEME_SNIPPET -->
+  <script>try{var t=localStorage.getItem('atual-admin-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- "Manter conectado" desligado: ao abrir o navegador de novo, a sessão salva é descartada antes do Supabase ler -->
+  <script>try{if(localStorage.getItem('atual-admin-ephemeral')==='1'&&!sessionStorage.getItem('atual-admin-alive')){localStorage.removeItem('atual-admin-auth');localStorage.removeItem('atual-admin-ephemeral')}}catch(e){}</script>
+  <meta name="color-scheme" content="light dark">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#f6f0e7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0a131a" media="(prefers-color-scheme: dark)">
+  <title>Painel · Atual Móveis</title>
+  <link rel="icon" href="/assets/brand/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/brand/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Urbanist:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/admin/css/admin.css">
+  <!-- three.js (vendorizado) para a prévia 3D do cadastro de produto: import('/assets/js/3d/viewer.js') -->
+  <script type="importmap">{"imports":{"three":"/assets/vendor/three/three.module.min.js","three/addons/":"/assets/vendor/three/addons/"}}</script>
+  <link rel="modulepreload" href="/admin/js/app.js">
+  <link rel="modulepreload" href="/admin/js/ui.js">
+  <link rel="modulepreload" href="/admin/js/api.js">
+</head>
+<body>
+  <div id="root">
+    <!-- Primeira abertura: só aparece se o painel demorar mais de 600 ms -->
+    <div class="boot" role="status" aria-live="polite">
+      <img class="boot__logo" src="/assets/brand/atual-logo-horizontal.svg" alt="Atual Móveis e Eletro" width="140" height="30">
+      <img class="boot__art" src="/assets/img/art/loading.svg" alt="" width="96" height="96">
+      <p class="boot__t">Abrindo o painel…</p>
+      <div class="boot__bar" aria-hidden="true"><span></span></div>
+    </div>
+  </div>
+  <noscript>
+    <div class="boot">
+      <img class="boot__logo" src="/assets/brand/atual-logo-horizontal.svg" alt="Atual Móveis e Eletro" width="140" height="30">
+      <img src="/assets/img/art/mascote-acena.svg" alt="" width="140" height="140">
+      <p class="boot__noscript">O painel precisa do JavaScript ligado. Ative nas configurações do navegador e recarregue a página.</p>
+    </div>
+    <style>.boot > * { opacity: 1 !important; animation: none !important; } #root { display: none; }</style>
+  </noscript>
+  <script src="/assets/js/config.js"></script>
+  <script src="/assets/vendor/supabase.min.js"></script>
+  <script src="/assets/vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="/admin/js/app.js"></script>
+</body>
+</html>
